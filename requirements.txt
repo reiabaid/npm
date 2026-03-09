@@ -1,5 +1,6 @@
 # Data fetching
 requests>=2.31.0
+python-dotenv>=1.0.0
 
 # Data processing
 pandas>=2.1.0

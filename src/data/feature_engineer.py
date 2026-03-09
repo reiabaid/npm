@@ -1,107 +1,65 @@
-"""
-Feature Engineering
-Transforms raw NPM and GitHub data into features for model training.
-"""
+"""Feature Engineering — compute one flat feature dict from raw NPM + GitHub data."""
 
-import pandas as pd
-import numpy as np
-import os
-from typing import Optional
+from datetime import datetime, timezone
+
+STANDARD_LICENSES = {"MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause"}
 
 
-def extract_npm_features(metadata: dict) -> dict:
-    """Extract features from NPM package metadata.
+def _parse_iso(date_str: str) -> datetime:
+    """Parse an ISO-8601 date string (with trailing Z) into a UTC datetime."""
+    return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
 
-    Args:
-        metadata: Raw NPM package metadata dictionary.
 
-    Returns:
-        A dictionary of extracted features.
-    """
-    latest_version = metadata.get("dist-tags", {}).get("latest", "")
-    versions = metadata.get("versions", {})
-    maintainers = metadata.get("maintainers", [])
-    time_info = metadata.get("time", {})
+def _days_since(date_str) -> int:
+    """Return whole days between date_str and now. Returns 0 if None/invalid."""
+    if not date_str:
+        return 0
+    try:
+        return max((datetime.now(timezone.utc) - _parse_iso(date_str)).days, 0)
+    except (ValueError, TypeError):
+        return 0
 
-    features = {
-        "name": metadata.get("name", ""),
-        "version_count": len(versions),
-        "maintainer_count": len(maintainers),
-        "has_readme": bool(metadata.get("readme")),
-        "has_homepage": bool(metadata.get("homepage")),
-        "has_repository": bool(metadata.get("repository")),
-        "has_bugs_url": bool(metadata.get("bugs")),
-        "has_license": bool(metadata.get("license")),
-        "latest_version": latest_version,
+
+def engineer_features(npm_raw: dict, github_raw: dict) -> dict:
+    """Compute one clean feature dict from raw NPM + GitHub data."""
+    time_obj = npm_raw.get("time", {})
+    versions = npm_raw.get("versions", {})
+    maintainers = npm_raw.get("maintainers", [])
+
+    latest_tag = npm_raw.get("dist-tags", {}).get("latest", "")
+    latest_version_data = versions.get(latest_tag, {})
+    scripts = latest_version_data.get("scripts", {})
+
+    days_since_created = _days_since(time_obj.get("created"))
+    days_since_last_update = _days_since(time_obj.get(latest_tag))
+    num_versions = len(versions)
+    release_velocity = num_versions / max(days_since_created, 1)
+    num_maintainers = len(maintainers)
+    has_postinstall = 1 if "postinstall" in scripts else 0
+    description_length = len(npm_raw.get("description", "") or "")
+
+    raw_license = npm_raw.get("license", "")
+    if isinstance(raw_license, dict):
+        raw_license = raw_license.get("type", "")
+    license_is_standard = 1 if raw_license in STANDARD_LICENSES else 0
+
+    days_since_last_commit = _days_since(github_raw.get("pushed_at"))
+
+    return {
+        "name":                   npm_raw.get("name", ""),
+        "days_since_created":     days_since_created,
+        "days_since_last_update": days_since_last_update,
+        "num_versions":           num_versions,
+        "release_velocity":       round(release_velocity, 6),
+        "num_maintainers":        num_maintainers,
+        "has_postinstall":        has_postinstall,
+        "description_length":     description_length,
+        "license_is_standard":    license_is_standard,
+        "has_github_repo":        github_raw.get("has_github_repo", 0),
+        "stargazers_count":       github_raw.get("stargazers_count", 0),
+        "forks_count":            github_raw.get("forks_count", 0),
+        "open_issues_count":      github_raw.get("open_issues_count", 0),
+        "subscribers_count":      github_raw.get("subscribers_count", 0),
+        "contributor_count":      github_raw.get("contributor_count", 0),
+        "days_since_last_commit": days_since_last_commit,
     }
-
-    # Dependency analysis for the latest version
-    if latest_version and latest_version in versions:
-        latest = versions[latest_version]
-        features["dependency_count"] = len(latest.get("dependencies", {}))
-        features["dev_dependency_count"] = len(latest.get("devDependencies", {}))
-        features["has_scripts"] = bool(latest.get("scripts"))
-        features["has_install_script"] = "install" in latest.get("scripts", {}) or \
-                                          "preinstall" in latest.get("scripts", {}) or \
-                                          "postinstall" in latest.get("scripts", {})
-
-    return features
-
-
-def extract_github_features(repo_info: dict, contributors: Optional[list] = None) -> dict:
-    """Extract features from GitHub repository data.
-
-    Args:
-        repo_info: Raw GitHub repository info dictionary.
-        contributors: Optional list of contributors.
-
-    Returns:
-        A dictionary of extracted features.
-    """
-    features = {
-        "stars": repo_info.get("stargazers_count", 0),
-        "forks": repo_info.get("forks_count", 0),
-        "open_issues": repo_info.get("open_issues_count", 0),
-        "watchers": repo_info.get("watchers_count", 0),
-        "is_fork": repo_info.get("fork", False),
-        "is_archived": repo_info.get("archived", False),
-        "has_wiki": repo_info.get("has_wiki", False),
-        "has_pages": repo_info.get("has_pages", False),
-        "repo_size": repo_info.get("size", 0),
-        "default_branch": repo_info.get("default_branch", ""),
-    }
-
-    if contributors:
-        features["contributor_count"] = len(contributors)
-
-    return features
-
-
-def build_feature_dataframe(records: list[dict]) -> pd.DataFrame:
-    """Build a pandas DataFrame from a list of feature dictionaries.
-
-    Args:
-        records: A list of feature dictionaries.
-
-    Returns:
-        A pandas DataFrame of features.
-    """
-    df = pd.DataFrame(records)
-    return df
-
-
-def save_processed_data(df: pd.DataFrame, filename: str, output_dir: str = "data/processed") -> str:
-    """Save processed features to a CSV file.
-
-    Args:
-        df: The DataFrame to save.
-        filename: The output filename.
-        output_dir: The directory to save to.
-
-    Returns:
-        The path to the saved file.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, filename)
-    df.to_csv(filepath, index=False)
-    return filepath
