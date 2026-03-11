@@ -1,4 +1,4 @@
-# SCOPE — Security Check for Open-source Package Ecosystems
+# SCOPE - Security Check for Open-source Package Ecosystems
 
 A security analysis tool for detecting malicious NPM packages using machine learning.
 
