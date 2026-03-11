@@ -103,8 +103,8 @@ def save_model(model: XGBClassifier, scaler: StandardScaler,
         A dictionary with paths to saved files.
     """
     os.makedirs(output_dir, exist_ok=True)
-    model_path = os.path.join(output_dir, "sentinel_model.joblib")
-    scaler_path = os.path.join(output_dir, "sentinel_scaler.joblib")
+    model_path = os.path.join(output_dir, "scope_model.joblib")
+    scaler_path = os.path.join(output_dir, "scope_scaler.joblib")
 
     joblib.dump(model, model_path)
     joblib.dump(scaler, scaler_path)

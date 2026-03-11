@@ -1,11 +1,11 @@
-# Sentinel NPM
+# SCOPE — Security Check for Open-source Package Ecosystems
 
-A security analysis tool for NPM packages.
+A security analysis tool for detecting malicious NPM packages using machine learning.
 
 ## Project Structure
 
 ```
-sentinel-npm/
+scope/
 ├── data/
 │   ├── raw/           # Raw data from NPM and GitHub
 │   └── processed/     # Processed and engineered features
@@ -19,7 +19,7 @@ sentinel-npm/
 │   │   ├── evaluate.py          # Evaluate model performance
 │   │   └── explain.py           # Model explainability utilities
 │   ├── cli/
-│   │   └── sentinel.py          # Command-line interface
+│   │   └── scope.py             # Command-line interface
 │   └── api/
 │       └── main.py              # REST API server
 ├── models/                      # Saved model artifacts
@@ -38,7 +38,7 @@ pip install -r requirements.txt
 ### CLI
 
 ```bash
-python -m src.cli.sentinel <package-name>
+python -m src.cli.scope <package-name>
 ```
 
 ### API

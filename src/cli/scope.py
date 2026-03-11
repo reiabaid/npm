@@ -1,5 +1,5 @@
 """
-Sentinel CLI
+SCOPE CLI
 Command-line interface for scanning NPM packages.
 """
 
@@ -14,20 +14,20 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="sentinel-npm")
+@click.version_option(version="0.1.0", prog_name="scope")
 def cli():
-    """🛡️ Sentinel NPM — Malicious Package Detector"""
+    """🔬 SCOPE — Security Check for Open-source Package Ecosystems"""
     pass
 
 
 @cli.command()
 @click.argument("package_name")
-@click.option("--model-path", default="models/sentinel_model.joblib", help="Path to the trained model.")
-@click.option("--scaler-path", default="models/sentinel_scaler.joblib", help="Path to the fitted scaler.")
+@click.option("--model-path", default="models/scope_model.joblib", help="Path to the trained model.")
+@click.option("--scaler-path", default="models/scope_scaler.joblib", help="Path to the fitted scaler.")
 @click.option("--explain", is_flag=True, help="Show SHAP-based feature explanations.")
 def scan(package_name: str, model_path: str, scaler_path: str, explain: bool):
     """Scan an NPM package for potential malicious behavior."""
-    console.print(Panel(f"[bold cyan]Scanning package:[/bold cyan] {package_name}", title="🛡️ Sentinel"))
+    console.print(Panel(f"[bold cyan]Scanning package:[/bold cyan] {package_name}", title="🔬 SCOPE"))
 
     # Step 1: Fetch metadata
     console.print("[yellow]Fetching NPM metadata...[/yellow]")
@@ -48,7 +48,7 @@ def scan(package_name: str, model_path: str, scaler_path: str, explain: bool):
         model = joblib.load(model_path)
         scaler = joblib.load(scaler_path)
     except FileNotFoundError:
-        console.print("[red]✗ Model not found. Train a model first with `sentinel train`.[/red]")
+        console.print("[red]✗ Model not found. Train a model first with `scope train`.[/red]")
         return
 
     console.print("[yellow]Running prediction...[/yellow]")
@@ -60,8 +60,8 @@ def scan(package_name: str, model_path: str, scaler_path: str, explain: bool):
 @click.option("--data-path", default="data/processed/features.csv", help="Path to processed training data.")
 @click.option("--output-dir", default="models", help="Directory to save the trained model.")
 def train(data_path: str, output_dir: str):
-    """Train the Sentinel detection model."""
-    console.print(Panel("[bold cyan]Training Sentinel Model[/bold cyan]", title="🛡️ Sentinel"))
+    """Train the SCOPE detection model."""
+    console.print(Panel("[bold cyan]Training SCOPE Model[/bold cyan]", title="🔬 SCOPE"))
 
     from src.model.train import load_training_data, prepare_features, train_model, save_model
     from src.model.evaluate import print_evaluation_report

@@ -55,7 +55,7 @@ def print_evaluation_report(model: Any, X_test: np.ndarray, y_test: np.ndarray) 
     y_pred = model.predict(X_test)
 
     print("=" * 60)
-    print("SENTINEL MODEL EVALUATION REPORT")
+    print("SCOPE MODEL EVALUATION REPORT")
     print("=" * 60)
     print()
 

@@ -1,5 +1,5 @@
 """
-Sentinel API
+SCOPE API
 REST API for scanning NPM packages.
 """
 
@@ -9,8 +9,8 @@ import joblib
 import os
 
 app = FastAPI(
-    title="Sentinel NPM API",
-    description="🛡️ API for detecting malicious NPM packages",
+    title="SCOPE API",
+    description="🔬 SCOPE — Security Check for Open-source Package Ecosystems",
     version="0.1.0",
 )
 
@@ -44,7 +44,7 @@ class HealthResponse(BaseModel):
 @app.get("/", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
-    model_exists = os.path.exists("models/sentinel_model.joblib")
+    model_exists = os.path.exists("models/scope_model.joblib")
     return HealthResponse(status="healthy", model_loaded=model_exists)
 
 
@@ -61,12 +61,12 @@ async def scan_package(request: ScanRequest):
     features = extract_npm_features(metadata)
 
     # Load model if available
-    model_path = "models/sentinel_model.joblib"
+    model_path = "models/scope_model.joblib"
     if not os.path.exists(model_path):
         raise HTTPException(status_code=503, detail="Model not trained yet. Train a model first.")
 
     model = joblib.load(model_path)
-    scaler = joblib.load("models/sentinel_scaler.joblib")
+    scaler = joblib.load("models/scope_scaler.joblib")
 
     # TODO: Align features and predict
     return ScanResponse(
