@@ -38,3 +38,4 @@ data/processed/*
 
 # Logs
 *.log
+failed_packages.txt

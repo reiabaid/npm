@@ -1,7 +1,7 @@
 # Suspicious / Malicious npm packages
 # Sources: GitHub Advisory DB (GHSA), Sonatype OSS Index,
 #          Snyk, Socket.dev, JFrog, Checkmarx, news reports
-# Generated: 2026-03-10 23:25:39
+# Generated: 2026-03-11 19:34:33
 # Total: 198  (confirmed malicious: 98, synthetic typosquats: 100)
 
 # ── Confirmed Malicious Packages ──

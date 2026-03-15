@@ -3,6 +3,8 @@
 import re
 import os
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from typing import Optional, Tuple
 from dotenv import load_dotenv
 
@@ -57,7 +59,7 @@ def fetch_github_raw(owner: str, repo: str) -> Optional[dict]:
         headers["Authorization"] = f"token {token}"
 
     try:
-        response = requests.get(url, headers=headers, timeout=30)
+        response = requests.get(url, headers=headers, timeout=30, verify=False)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as e:
@@ -100,7 +102,7 @@ def fetch_contributor_count(owner: str, repo: str) -> int:
     params = {"per_page": 1, "anon": "true"}
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response = requests.get(url, headers=headers, params=params, timeout=30, verify=False)
         response.raise_for_status()
 
         link_header = response.headers.get("Link", "")
