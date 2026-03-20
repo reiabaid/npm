@@ -9,8 +9,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from imblearn.over_sampling import SMOTE
 import pandas as pd
 import os
+import joblib
 
 # Define feature lists
 # Based on the output of feature_engineer.py
@@ -135,3 +137,16 @@ if __name__ == "__main__":
     print(f"X_train_transformed shape: {X_train_transformed.shape}")
     print(f"X_val_transformed shape: {X_val_transformed.shape}")
     print(f"X_test_transformed shape: {X_test_transformed.shape}")
+
+    print("\nApplying SMOTE to training data...")
+    sm = SMOTE(random_state=42)
+    X_train_res, y_train_res = sm.fit_resample(X_train_transformed, y_train)
+
+    print("\n--- Train set y AFTER SMOTE ---")
+    print(y_train_res.value_counts())
+    
+    print("\nSaving fitted preprocessor...")
+    models_dir = os.path.join(base_dir, 'models')
+    os.makedirs(models_dir, exist_ok=True)
+    joblib.dump(preprocessor, os.path.join(models_dir, 'preprocessor.pkl'))
+    print("Preprocessor saved successfully.")
