@@ -6,6 +6,7 @@ import os
 import joblib
 import pandas as pd
 import numpy as np
+import difflib
 from rich.console import Console
 from rich.table import Table
 from rich.progress import track
@@ -18,16 +19,21 @@ from src.data.npm_fetcher import fetch_npm_raw
 from src.data.github_fetcher import fetch_github_stats
 from src.data.feature_engineer import engineer_features
 from src.model.explain import get_shap_explainer, explain_single_prediction
+from src.cli.output import format_result
 
 console = Console()
 
+VERSION = "1.0.0"
 
 class PackageNotFoundError(Exception):
     """Raised when a package is not found on npm."""
     pass
 
 class SentinelEngine:
-    def __init__(self, model_path="models/scope_model.joblib", scaler_path="models/scope_scaler.joblib"):
+    def __init__(self, 
+                 model_path="models/scope_model.joblib", 
+                 scaler_path="models/scope_scaler.joblib",
+                 popular_pkgs_path="data/healthy_packages.txt"):
         # Load model and scaler
         if not os.path.exists(model_path) or not os.path.exists(scaler_path):
             raise FileNotFoundError(f"Model ({model_path}) or scaler ({scaler_path}) not found. Please run training first.")
@@ -35,7 +41,7 @@ class SentinelEngine:
         self.model = joblib.load(model_path)
         self.scaler = joblib.load(scaler_path)
         
-        # XGBoost models store feature_names. 
+        # XGBoost/RF models might store feature_names. 
         if hasattr(self.model, "feature_names_in_"):
             self.feature_names = self.model.feature_names_in_.tolist()
         else:
@@ -47,8 +53,32 @@ class SentinelEngine:
             ]
         
         self.explainer = get_shap_explainer(self.model)
+        
+        # Load popular packages for typosquatting detection
+        self.popular_packages = []
+        if os.path.exists(popular_pkgs_path):
+            with open(popular_pkgs_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        self.popular_packages.append(line)
+        else:
+            console.print(f"[yellow]Warning: Popular packages list not found at {popular_pkgs_path}. Typosquatting detection disabled.[/yellow]")
 
-    def analyze(self, package_name):
+    def suggest_intended_package(self, package_name):
+        """Find if a package name is suspiciously similar to a popular one."""
+        if not self.popular_packages or package_name in self.popular_packages:
+            return None
+            
+        matches = difflib.get_close_matches(package_name, self.popular_packages, n=1, cutoff=0.8)
+        if matches:
+            suggested = matches[0]
+            # Calculate similarity ratio
+            similarity = difflib.SequenceMatcher(None, package_name, suggested).ratio()
+            return {"name": suggested, "similarity": similarity}
+        return None
+
+    def analyze(self, package_name, skip_suggestion=False):
         """Analyze a single package."""
         warnings = []
         try:
@@ -59,8 +89,9 @@ class SentinelEngine:
             
             # 2. Fetch GitHub
             repo_field = npm_raw.get("repository")
-            # If rate-limited or other errors, fetch_github_stats usually returns empty stats
-            # We want to detect if it was rate-limited or failed
+            if not repo_field:
+                warnings.append("No repository link found (potential risk factor).")
+                
             github_stats = fetch_github_stats(repo_field)
             if not github_stats.get("has_github_repo", 0) and repo_field:
                 warnings.append("GitHub data unavailable (rate-limited or not found). Proceeding with zeros.")
@@ -79,7 +110,7 @@ class SentinelEngine:
             # 6. Explain
             explanations = explain_single_prediction(self.explainer, X_scaled, self.feature_names)
             
-            return {
+            result = {
                 "package": package_name,
                 "score": score,
                 "risk_level": self._get_risk_level(score),
@@ -87,6 +118,19 @@ class SentinelEngine:
                 "explanations": explanations,
                 "warnings": warnings
             }
+
+            # 7. Typosquatting Check
+            if not skip_suggestion and result["risk_level"] in ["HIGH", "CRITICAL"]:
+                suggestion = self.suggest_intended_package(package_name)
+                if suggestion:
+                    # Fetch score for the suggested (popular) package for comparison
+                    # skip_suggestion=True to avoid infinite recursion
+                    s_result = self.analyze(suggestion["name"], skip_suggestion=True)
+                    if "score" in s_result:
+                        suggestion["score"] = s_result["score"]
+                        result["suggestion"] = suggestion
+
+            return result
         except PackageNotFoundError as e:
             return {"package": package_name, "error": str(e), "status": "NOT_FOUND"}
         except Exception as e:
@@ -126,8 +170,6 @@ def parse_requirements_txt(filepath):
             for line in f:
                 pkg = line.strip()
                 if pkg and not pkg.startswith("#"):
-                    # Basic extraction for requirements.txt (simple line-by-line version)
-                    # We only care about name, before == or >=
                     if "==" in pkg: pkg = pkg.split("==")[0].strip()
                     elif ">=" in pkg: pkg = pkg.split(">=")[0].strip()
                     elif "<=" in pkg: pkg = pkg.split("<=")[0].strip()
@@ -137,41 +179,23 @@ def parse_requirements_txt(filepath):
         console.print(f"[bold red]Error parsing requirements.txt:[/bold red] {e}")
         return []
 
-def print_result(result, engine: SentinelEngine):
-    if "error" in result:
-        console.print(f"[bold red]X[/bold red] {result['package'] if 'package' in result else 'Error'}: {result['error']}")
-        return
-
-    score = result['score']
-    risk = result['risk_level']
-    color = "green" if risk == "HEALTHY" else "yellow" if risk == "MEDIUM" else "red" if risk == "HIGH" else "bold red"
-    
-    panel_title = f"Sentinel Report: {result['package']}"
-    content = f"[bold]Risk Score:[/bold] [{color}]{score:.4f} ({risk})[/{color}]\n\n"
-    content += "[bold]Top Risk Factors:[/bold]\n"
-    
-    # Filter to show factors that increase risk (positive SHAP)
-    pos_factors = [e for e in result["explanations"] if e["shap_value"] > 0][:5]
-    if pos_factors:
-        for f in pos_factors:
-            content += f"- {f['feature']}: {f['shap_value']:.4f}\n"
-    else:
-        content += "- None (Healthy package)\n"
-
-    console.print(Panel(content, title=panel_title, border_style=color))
-
 def main():
-    parser = argparse.ArgumentParser(description="Sentinel: NPM Package Security Scoring")
+    parser = argparse.ArgumentParser(
+        description="Sentinel: AI-powered NPM Package Security Scoring Tool",
+        epilog="Example: sentinel check lodash"
+    )
+    parser.add_argument("--version", action="version", version=f"Sentinel {VERSION}")
+    
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    check_parser = subparsers.add_parser("check", help="Score a single package")
-    check_parser.add_argument("package", help="Name of the NPM package")
-    check_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    check_parser = subparsers.add_parser("check", help="Score a single package from the NPM registry")
+    check_parser.add_argument("package", help="Name of the NPM package to analyze (e.g., 'express', 'lodash')")
+    check_parser.add_argument("--json", action="store_true", help="Output results in machine-readable JSON format")
 
-    batch_parser = subparsers.add_parser("batch", help="Score packages from a file")
-    batch_parser.add_argument("file", help="Path to package.json or requirements.txt (style)")
-    batch_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
-    batch_parser.add_argument("--fail-on-high", action="store_true", help="Exit with code 1 if any package score > 0.8")
+    batch_parser = subparsers.add_parser("batch", help="Score multiple packages from a project file")
+    batch_parser.add_argument("file", help="Path to package.json or requirements.txt style file")
+    batch_parser.add_argument("--json", action="store_true", help="Output results in machine-readable JSON format")
+    batch_parser.add_argument("--fail-on-high", action="store_true", help="Exit with code 1 if any package score exceeds 0.80")
 
     args = parser.parse_args()
 
@@ -190,10 +214,10 @@ def main():
         if args.json:
             print(json.dumps(result, indent=2))
         else:
-            print_result(result, engine)
+            console.print(format_result(result))
         
         if "error" in result:
-            sys.exit(1)
+            sys.exit(1 if result.get("status") != "NOT_FOUND" else 0)
 
     elif args.command == "batch":
         packages = []
@@ -207,14 +231,11 @@ def main():
             sys.exit(1)
         
         results = engine.analyze_many(packages)
-        
-        # Sort by risk score descending
         results.sort(key=lambda x: x.get('score', 0), reverse=True)
         
         if args.json:
             print(json.dumps(results, indent=2))
         else:
-            # Summary Table
             table = Table(title="Batch Analysis Summary")
             table.add_column("Package", style="cyan")
             table.add_column("Risk Level", justify="center")
@@ -230,7 +251,7 @@ def main():
                     risk = res['risk_level']
                     score = res['score']
                     color = "green" if risk == "HEALTHY" else "yellow" if risk == "MEDIUM" else "red" if risk == "HIGH" else "bold red"
-                    table.add_row(res['package'], f"[{color}]{risk}[/{color}]", f"{score:.4f}")
+                    table.add_row(res['package'], f"[{color}]{risk}[/{color}]", f"{score*100:.1f}%")
                     summary[risk] += 1
             
             console.print(table)
@@ -240,12 +261,10 @@ def main():
             if summary["HIGH"] > 0: summary_line += f"[red]{summary['HIGH']} HIGH[/red], "
             if summary["MEDIUM"] > 0: summary_line += f"[yellow]{summary['MEDIUM']} MEDIUM[/yellow], "
             if summary["HEALTHY"] > 0: summary_line += f"[green]{summary['HEALTHY']} HEALTHY[/green]"
-            
             if summary["ERRORS"] > 0: summary_line += f", [bold white on red]{summary['ERRORS']} ERRORS[/bold white on red]"
             
             console.print(Panel(summary_line.strip(", ")))
 
-        # Fail-on-high logic
         if args.fail_on_high:
             for res in results:
                 if res.get('score', 0) > 0.8:
