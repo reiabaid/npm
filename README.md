@@ -101,7 +101,7 @@ SCOPE/
 ### Install
 
 ```bash
-git clone https://github.com/yourusername/npm
+git clone https://github.com/reiabaid/npm
 pip install -r requirements.txt
 pip install -e .
 ```
