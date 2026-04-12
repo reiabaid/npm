@@ -351,3 +351,101 @@ This project was built following an 18-day structured plan. The interactive chec
 ## Disclaimer
 
 SCOPE is a heuristic tool. A HIGH RISK score is a signal to investigate, not a definitive verdict. A LOW RISK score does not guarantee a package is safe. Always apply judgment before installing dependencies in production systems.
+
+---
+
+## Configuration
+
+SCOPE stores configuration in `~/.scope/config.json`. On first run, it creates this file with defaults:
+
+```json
+{
+  "github_token": "",
+  "npm_timeout": 30,
+  "github_timeout": 30,
+  "cache_expiry_hours": 1
+}
+```
+
+### Set GitHub token for faster API limits
+
+```bash
+# Via environment variable (temporary)
+export GITHUB_TOKEN=ghp_your_token_here
+scope check express
+
+# Or store permanently in config
+scope set-config --github-token ghp_your_token_here
+```
+
+### Adjust cache expiry (default: 1 hour)
+
+```bash
+scope set-config --cache-expiry 24  # cache results for 24 hours
+```
+
+---
+
+## Caching
+
+SCOPE automatically caches analysis results (by default, for 1 hour) in `~/.scope/cache/`.
+
+### Skip cache for fresh data
+
+```bash
+scope check lodash --no-cache
+scope batch package.json --no-cache
+```
+
+### Clear cache
+
+```bash
+scope clear-cache
+```
+
+Cache is stored as JSON:
+- **Location:** `~/.scope/cache/package_name_<hash>.json`
+- **Format:** `{ "timestamp": "2024-01-15T...", "result": {...} }`
+- **Expiry:** Controlled by `cache_expiry_hours` in config
+
+---
+
+## Testing
+
+This project includes a comprehensive pytest test suite.
+
+### Install test dependencies
+
+```bash
+pip install -e ".[dev]"
+```
+
+### Run all tests
+
+```bash
+pytest
+```
+
+### Run specific test file
+
+```bash
+pytest tests/test_feature_engineer.py -v
+```
+
+### Run with coverage
+
+```bash
+pytest --cov=src tests/
+```
+
+### Test categories
+
+- **test_feature_engineer.py**: 30+ tests covering:
+  - ISO date parsing
+  - Days calculation (with None, invalid, edge cases)
+  - Feature engineering for all 15 features
+  - Edge cases: empty maintainers, zero versions, 1000+ versions
+  - Scoped packages (@types/react), special characters, long names
+  - High downloads with zero stars, missing GitHub repo
+  - Integration tests with realistic package data (lodash)
+

@@ -96,7 +96,7 @@ def format_result(result: dict) -> Panel:
 
     return Panel(
         Group(*render_items),
-        title=f"[bold white]Sentinel Analysis[/bold white]",
+        title=f"[bold white]SCOPE Analysis[/bold white]",
         border_style=color,
         padding=(1, 2)
     )

@@ -20,6 +20,8 @@ from src.data.github_fetcher import fetch_github_stats
 from src.data.feature_engineer import engineer_features
 from src.model.explain import get_shap_explainer, explain_single_prediction
 from src.cli.output import format_result
+from src.cli.cache import ScopeCache
+from src.cli.config import ScopeConfig
 
 console = Console()
 
@@ -29,7 +31,7 @@ class PackageNotFoundError(Exception):
     """Raised when a package is not found on npm."""
     pass
 
-class SentinelEngine:
+class ScopeEngine:
     def __init__(self, 
                  model_path="models/scope_model.joblib", 
                  scaler_path="models/scope_scaler.joblib",
@@ -78,8 +80,14 @@ class SentinelEngine:
             return {"name": suggested, "similarity": similarity}
         return None
 
-    def analyze(self, package_name, skip_suggestion=False):
+    def analyze(self, package_name, skip_suggestion=False, use_cache=True):
         """Analyze a single package."""
+        # Check cache first (unless skip_suggestion is True, which is used for recursion)
+        if use_cache and not skip_suggestion:
+            cached = ScopeCache.get(package_name)
+            if cached:
+                return cached
+        
         warnings = []
         try:
             # 1. Fetch NPM
@@ -130,6 +138,9 @@ class SentinelEngine:
                         suggestion["score"] = s_result["score"]
                         result["suggestion"] = suggestion
 
+            # Cache the result
+            ScopeCache.set(package_name, result)
+            
             return result
         except PackageNotFoundError as e:
             return {"package": package_name, "error": str(e), "status": "NOT_FOUND"}
@@ -143,11 +154,11 @@ class SentinelEngine:
         if score < 0.8: return "HIGH"
         return "CRITICAL"
 
-    def analyze_many(self, package_names):
+    def analyze_many(self, package_names, use_cache=True):
         """Analyze a list of packages with progress bar."""
         results = []
         for pkg in track(package_names, description="Analyzing packages..."):
-            results.append(self.analyze(pkg))
+            results.append(self.analyze(pkg, use_cache=use_cache))
         return results
 
 def parse_package_json(filepath):
@@ -181,21 +192,23 @@ def parse_requirements_txt(filepath):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sentinel: AI-powered NPM Package Security Scoring Tool",
-        epilog="Example: sentinel check lodash"
+        description="SCOPE: AI-powered NPM Package Security Scoring Tool",
+        epilog="Example: scope check lodash"
     )
-    parser.add_argument("--version", action="version", version=f"Sentinel {VERSION}")
+    parser.add_argument("--version", action="version", version=f"SCOPE {VERSION}")
     
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     check_parser = subparsers.add_parser("check", help="Score a single package from the NPM registry")
     check_parser.add_argument("package", help="Name of the NPM package to analyze (e.g., 'express', 'lodash')")
     check_parser.add_argument("--json", action="store_true", help="Output results in machine-readable JSON format")
+    check_parser.add_argument("--no-cache", action="store_true", help="Skip cache and always fetch fresh data")
 
     batch_parser = subparsers.add_parser("batch", help="Score multiple packages from a project file")
     batch_parser.add_argument("file", help="Path to package.json or requirements.txt style file")
     batch_parser.add_argument("--json", action="store_true", help="Output results in machine-readable JSON format")
     batch_parser.add_argument("--fail-on-high", action="store_true", help="Exit with code 1 if any package score exceeds 0.80")
+    batch_parser.add_argument("--no-cache", action="store_true", help="Skip cache and always fetch fresh data")
 
     args = parser.parse_args()
 
@@ -204,13 +217,13 @@ def main():
         sys.exit(0)
 
     try:
-        engine = SentinelEngine()
+        engine = ScopeEngine()
     except Exception as e:
         console.print(f"[bold red]Error initializing engine:[/bold red] {e}")
         sys.exit(1)
 
     if args.command == "check":
-        result = engine.analyze(args.package)
+        result = engine.analyze(args.package, use_cache=not args.no_cache)
         if args.json:
             print(json.dumps(result, indent=2))
         else:
@@ -230,7 +243,7 @@ def main():
             console.print("[bold red]No packages found in file.[/bold red]")
             sys.exit(1)
         
-        results = engine.analyze_many(packages)
+        results = engine.analyze_many(packages, use_cache=not args.no_cache)
         results.sort(key=lambda x: x.get('score', 0), reverse=True)
         
         if args.json:
