@@ -410,6 +410,130 @@ Cache is stored as JSON:
 
 ---
 
+## REST API
+
+SCOPE also ships with a **FastAPI-powered REST API** for programmatic access to all package analysis features. Perfect for integrating security scanning into CI/CD pipelines, applications, and services.
+
+### Start the API
+
+```bash
+# Development mode (hot reload on changes)
+python -m uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
+
+# Production mode
+python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+### Interactive API Documentation
+
+Once the server is running, visit:
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
+- **OpenAPI Schema:** http://localhost:8000/openapi.json
+
+### API Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/health` | Health check & model status |
+| `POST` | `/analyze` | Analyze single package |
+| `POST` | `/batch` | Analyze multiple packages (max 20) |
+| `GET` | `/cache/size` | Get cache statistics |
+| `GET` | `/cache/clear` | Clear all cached results |
+
+### Example API Usage
+
+**Single package (Python):**
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/analyze",
+    json={"package_name": "express"}
+)
+result = response.json()
+print(f"Risk Level: {result['risk_level']}")
+print(f"Score: {result['score']:.4f}")
+```
+
+**Batch analysis (cURL):**
+```bash
+curl -X POST http://localhost:8000/batch \
+  -H "Content-Type: application/json" \
+  -d '{"packages":["express","react","vue"]}'
+```
+
+**JavaScript/Node.js:**
+```javascript
+const response = await fetch("http://localhost:8000/analyze", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ package_name: "lodash" })
+});
+const result = await response.json();
+console.log(`${result.package}: ${result.risk_level}`);
+```
+
+### API Features
+
+- **Response Caching:** 30-minute TTL reduces analysis time for repeated packages
+- **Rate Limiting:** 10 requests per 60 seconds per IP address
+- **CORS Enabled:** Cross-origin requests allowed
+- **Async Processing:** Concurrent handling of multiple requests
+- **Rich Explanations:** Every score includes top 4 SHAP-based feature explanations
+- **Batch Operations:** Analyze up to 20 packages in a single request
+
+### API Response Example
+
+```json
+{
+  "package": "express",
+  "score": 0.0011,
+  "risk_level": "HEALTHY",
+  "features": {
+    "days_since_created": 5582,
+    "num_versions": 287,
+    "stargazers_count": 68924,
+    "...": "..."
+  },
+  "explanations": [
+    {
+      "feature": "num_versions",
+      "shap_value": -1.6469,
+      "description": null
+    }
+  ],
+  "warnings": [],
+  "suggestion": null
+}
+```
+
+### Error Handling
+
+```json
+{
+  "detail": "Package 'nonexistent' not found on npm"
+}
+```
+
+Common error codes:
+- `404 Not Found` — Package does not exist on npm
+- `422 Unprocessable Entity` — Invalid request (e.g., too many packages)
+- `429 Too Many Requests` — Rate limit exceeded
+- `503 Service Unavailable` — Model not initialized
+
+### Performance
+
+- **First-time analysis:** 1-3 seconds (fetches npm + GitHub data)
+- **Cached analysis:** 10-50ms (served from cache)
+- **Batch of 20 packages:** ~3-10 seconds first run, instant on repeat
+
+### Full API Documentation
+
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for comprehensive API reference, including request/response models, examples in multiple languages, deployment guides, and troubleshooting.
+
+---
+
 ## Testing
 
 This project includes a comprehensive pytest test suite.
