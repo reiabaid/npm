@@ -39,3 +39,6 @@ data/processed/*
 # Logs
 *.log
 failed_packages.txt
+
+# JavaScript
+node_modules/

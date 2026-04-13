@@ -314,7 +314,7 @@ curl -X POST http://localhost:8000/analyze \
 | ML — tuning | RandomizedSearchCV |
 | CLI | Python argparse, rich |
 | API | FastAPI, Pydantic, uvicorn |
-| Frontend | Vanilla HTML/CSS/JS |
+| Frontend | React + Vite |
 | CI/CD | GitHub Actions |
 | Deployment | Railway (API), Vercel (frontend) |
 
@@ -428,6 +428,32 @@ python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 Once the server is running, visit:
 - **Swagger UI:** http://localhost:8000/docs
+
+---
+
+## React Frontend
+
+The project now includes a React frontend at `frontend/` with a minimal glass-style UI for package risk analysis.
+
+### Start API + Frontend
+
+```bash
+# Terminal 1: start API
+python -m uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
+
+# Terminal 2: start frontend
+cd frontend
+npm install
+npm run dev
+```
+
+### Frontend Environment
+
+You can point the UI to a different API base URL using:
+
+```bash
+VITE_API_BASE=http://127.0.0.1:8000
+```
 - **ReDoc:** http://localhost:8000/redoc
 - **OpenAPI Schema:** http://localhost:8000/openapi.json
 
