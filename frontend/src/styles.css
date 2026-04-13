@@ -237,6 +237,37 @@ h1 {
   gap: 1rem;
 }
 
+.results-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.results-main {
+  display: grid;
+  gap: 1rem;
+}
+
+.results-side {
+  position: sticky;
+  top: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.95rem;
+}
+
+.section-heading p {
+  max-width: 62ch;
+}
+
 .score-card,
 .chart-card {
   transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
@@ -271,6 +302,13 @@ h2 {
   grid-template-columns: auto 1fr;
   gap: 1.2rem;
   align-items: center;
+}
+
+.score-note {
+  margin: 0.45rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.5;
 }
 
 .gauge-wrap {
@@ -369,6 +407,76 @@ h2 {
 
 .mono {
   font-family: "JetBrains Mono", monospace;
+}
+
+.explainer-card {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.criteria-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.criterion-card {
+  padding: 0.95rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 0.55rem;
+}
+
+.criterion-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.criterion-label {
+  margin: 0;
+  font-weight: 600;
+}
+
+.criterion-key,
+.criterion-value,
+.criterion-factor {
+  margin: 0;
+}
+
+.criterion-key,
+.criterion-meaning,
+.criterion-factor {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.criterion-value {
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+
+.criterion-chip {
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.73rem;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chip-risk {
+  color: #e7c9c9;
+  background: rgba(181, 122, 122, 0.12);
+}
+
+.chip-safe {
+  color: #d6ece5;
+  background: rgba(127, 169, 139, 0.12);
 }
 
 .positive {
@@ -553,6 +661,22 @@ h2 {
 @media (max-width: 768px) {
   .shell {
     padding-top: 5.5vh;
+  }
+
+  .results-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .results-side {
+    position: static;
+  }
+
+  .section-heading {
+    flex-direction: column;
+  }
+
+  .criteria-grid {
+    grid-template-columns: 1fr;
   }
 
   .search-row {

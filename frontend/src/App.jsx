@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 const LOADING_STEPS = [
   "Scanning package metadata",
@@ -8,6 +8,59 @@ const LOADING_STEPS = [
 ];
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+
+const CRITERIA = [
+  {
+    key: "days_since_created",
+    label: "Package age",
+    meaning: "Newer packages can be riskier because they have less history and fewer community signals.",
+  },
+  {
+    key: "days_since_last_update",
+    label: "Last update",
+    meaning: "A stale package with little recent maintenance can be a sign of abandoned or opportunistic publishing.",
+  },
+  {
+    key: "num_versions",
+    label: "Version count",
+    meaning: "A very small or unusually bursty version history can indicate unstable release behavior.",
+  },
+  {
+    key: "release_velocity",
+    label: "Release velocity",
+    meaning: "This is versions divided by package age in days. Faster release bursts can increase suspicion.",
+  },
+  {
+    key: "num_maintainers",
+    label: "Maintainers",
+    meaning: "Single-maintainer packages carry more concentration risk than packages with a broader maintainer base.",
+  },
+  {
+    key: "has_postinstall",
+    label: "Postinstall script",
+    meaning: "A postinstall script is a common malware execution vector and is treated as a strong risk signal.",
+  },
+  {
+    key: "has_github_repo",
+    label: "GitHub repository",
+    meaning: "A missing repository link reduces verification confidence and weakens external trust signals.",
+  },
+  {
+    key: "stargazers_count",
+    label: "GitHub stars",
+    meaning: "Stars act as a rough trust proxy; very low values can amplify suspicion when combined with other signals.",
+  },
+  {
+    key: "forks_count",
+    label: "GitHub forks",
+    meaning: "Forks help indicate adoption and community review activity.",
+  },
+  {
+    key: "contributor_count",
+    label: "Contributors",
+    meaning: "More contributors usually means less single-person control and more organic maintenance.",
+  },
+];
 
 function normalizePackageName(value) {
   return value.trim();
@@ -73,6 +126,44 @@ function formatReport(result) {
   }
 
   return lines.join("\n");
+}
+
+function formatFeatureValue(value) {
+  if (value === null || value === undefined) return "n/a";
+
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+
+  if (typeof value === "number") {
+    if (Number.isInteger(value)) {
+      return value.toLocaleString();
+    }
+
+    if (Math.abs(value) < 1) {
+      return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    }
+
+    return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+  }
+
+  return String(value);
+}
+
+function getFeatureDescription(key) {
+  return CRITERIA.find((item) => item.key === key)?.meaning || "Derived from package and repository metadata.";
+}
+
+function getTopContributors(result) {
+  const features = result?.features || {};
+  const explanations = Array.isArray(result?.explanations) ? result.explanations : [];
+
+  return CRITERIA.map((criterion) => ({
+    ...criterion,
+    value: features[criterion.key],
+    description: getFeatureDescription(criterion.key),
+    factor: explanations.find((entry) => entry.feature === criterion.key),
+  })).filter((criterion) => criterion.value !== undefined);
 }
 
 function getAlternativeName(result) {
@@ -199,31 +290,65 @@ function renderFactors(factors) {
   return <FactorBars items={factors} />;
 }
 
-function renderResults(data, onCopyReport, onCopyShareUrl, onAnalyzeAlternative) {
+function renderCriteria(result) {
+  const criteria = getTopContributors(result);
+
+  return (
+    <div className="criteria-grid">
+      {criteria.map((criterion) => {
+        const factorValue = criterion.factor?.shap_value ?? 0;
+        const positive = factorValue >= 0;
+
+        return (
+          <article className="criterion-card" key={criterion.key}>
+            <div className="criterion-head">
+              <div>
+                <p className="criterion-label">{criterion.label}</p>
+                <p className="criterion-key mono">{criterion.key}</p>
+              </div>
+              <span className={`criterion-chip ${positive ? "chip-risk" : "chip-safe"}`}>
+                {positive ? "pushes risk up" : "pushes risk down"}
+              </span>
+            </div>
+            <p className="criterion-value mono">{formatFeatureValue(criterion.value)}</p>
+            <p className="criterion-meaning">{criterion.description}</p>
+            <p className="criterion-factor mono">
+              SHAP impact: {positive ? "↑" : "↓"} {Math.abs(factorValue).toFixed(3)}
+            </p>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderInterpretability(result) {
+  return (
+    <article className="glass card explainer-card">
+      <h2>How this result is built</h2>
+      <p className="muted">
+        The score combines package metadata, GitHub reputation signals, and model explanation values. Below is the exact
+        meaning of the criteria you are seeing.
+      </p>
+      {renderCriteria(result)}
+    </article>
+  );
+}
+
+function renderResults(data, recentAnalyses, onCopyReport, onCopyShareUrl, onAnalyzeAlternative, onSelectRecent) {
   const riskTone = getRiskTone(data.risk_level);
   const alternativeName = getAlternativeName(data);
   const factors = Array.isArray(data.explanations) ? data.explanations.slice(0, 4) : [];
 
   return (
-    <section className="results reveal reveal-delay-2">
-      <article className={`glass card score-card risk-${riskTone}`}>
-        <h2>Risk Insights</h2>
-        <div className="score-layout">
-          <Gauge score={data.score} riskLevel={data.risk_level} />
-          <div className="score-details">
-            <p className="score-line">
-              <span className="label">Package</span>
-              <span className="mono">{data.package}</span>
-            </p>
-            <p className="score-line">
-              <span className="label">Risk Level</span>
-              <span>{riskBadge(data.score, data.risk_level)}</span>
-            </p>
-            <p className="score-line">
-              <span className="label">Model Score</span>
-              <span className="mono">{data.score.toFixed(3)}</span>
-            </p>
-
+    <section className="results-shell reveal reveal-delay-2">
+      <div className="results-main">
+        <article className={`glass card score-card risk-${riskTone}`}>
+          <div className="section-heading">
+            <div>
+              <h2>Risk Insights</h2>
+              <p className="muted">The gauge shows the final model score. The factor list shows which signals pushed it up or down.</p>
+            </div>
             <div className="result-actions">
               <button type="button" className="secondary-button" onClick={() => onCopyReport(data)}>
                 Copy Report
@@ -233,22 +358,62 @@ function renderResults(data, onCopyReport, onCopyShareUrl, onAnalyzeAlternative)
               </button>
             </div>
           </div>
-        </div>
 
-        {alternativeName && (
-          <div className="typosquat-note">
-            <span>May be typosquatting. Did you mean:</span>
-            <button type="button" className="inline-link" onClick={() => onAnalyzeAlternative(alternativeName)}>
-              {alternativeName}?
-            </button>
+          <div className="score-layout">
+            <Gauge score={data.score} riskLevel={data.risk_level} />
+            <div className="score-details">
+              <p className="score-line">
+                <span className="label">Package</span>
+                <span className="mono">{data.package}</span>
+              </p>
+              <p className="score-line">
+                <span className="label">Risk Level</span>
+                <span>{riskBadge(data.score, data.risk_level)}</span>
+              </p>
+              <p className="score-line">
+                <span className="label">Model Score</span>
+                <span className="mono">{data.score.toFixed(3)}</span>
+              </p>
+              <p className="score-note">
+                A higher score means the model found stronger signals associated with risky or suspicious packages.
+              </p>
+            </div>
           </div>
-        )}
-      </article>
 
-      <article className="glass card chart-card">
-        <h2>Top Risk Factors</h2>
-        {renderFactors(factors)}
-      </article>
+          {alternativeName && (
+            <div className="typosquat-note">
+              <span>May be typosquatting. Did you mean:</span>
+              <button type="button" className="inline-link" onClick={() => onAnalyzeAlternative(alternativeName)}>
+                {alternativeName}?
+              </button>
+            </div>
+          )}
+        </article>
+
+        {renderInterpretability(data)}
+
+        <article className="glass card chart-card">
+          <h2>Top Risk Factors</h2>
+          <p className="muted">These are the strongest SHAP explanations behind this prediction.</p>
+          {renderFactors(factors)}
+        </article>
+      </div>
+
+      <aside className="results-side">
+        <section className="glass card recent-section">
+          <div className="recent-header">
+            <h2>Recent Analyses</h2>
+            <p className="muted">Click any package to reopen it without another API call.</p>
+          </div>
+          {recentAnalyses.length > 0 ? (
+            <div className="recent-grid">
+              {recentAnalyses.map((entry) => renderRecentAnalysisCard(entry, onSelectRecent))}
+            </div>
+          ) : (
+            <p className="muted">Run a few analyses and they will appear here.</p>
+          )}
+        </section>
+      </aside>
     </section>
   );
 }
@@ -282,11 +447,6 @@ export default function App() {
 
     return () => clearInterval(id);
   }, [loading]);
-
-  const insights = useMemo(() => {
-    if (!result?.explanations?.length) return [];
-    return result.explanations.slice(0, 4);
-  }, [result]);
 
   async function analyzePackage(rawPackageName) {
     const trimmed = normalizePackageName(rawPackageName);
@@ -414,22 +574,16 @@ export default function App() {
           </section>
         )}
 
-        {result && !loading && (
-          renderResults(result, handleCopyReport, handleCopyShareUrl, handleAnalyzeAlternative)
-        )}
-
-        {recentAnalyses.length > 0 && (
-          <section className="glass card recent-section reveal reveal-delay-2">
-            <div className="recent-header">
-              <h2>Recent Analyses</h2>
-              <p className="muted">Last 5 packages analyzed in this session.</p>
-            </div>
-
-            <div className="recent-grid">
-              {recentAnalyses.map((entry) => renderRecentAnalysisCard(entry, handleSelectRecent))}
-            </div>
-          </section>
-        )}
+        {result &&
+          !loading &&
+          renderResults(
+            result,
+            recentAnalyses,
+            handleCopyReport,
+            handleCopyShareUrl,
+            handleAnalyzeAlternative,
+            handleSelectRecent,
+          )}
       </main>
     </div>
   );
