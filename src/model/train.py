@@ -1,18 +1,19 @@
 """
-SCOPE – Day 3: Baseline Model Training & Diagnostics
-=====================================================
+SCOPE – Model Training
+======================
 Pipeline:
-  1. Load dataset → preprocess (via preprocess.py) → SMOTE balance
-  2. Train RandomForestClassifier(n_estimators=100, random_state=42)
-  3. Evaluate on X_val: classification_report + confusion matrix
-  4. Visualise a single decision tree (max_depth=3)
-  5. Plot feature importances (sorted)
-  6. Plot ROC curve + compute AUC
+  1. Load dataset → preprocess (ColumnTransformer) → SMOTE balance
+  2. 5-fold stratified CV to compare RandomForest and XGBoost
+  3. GridSearchCV on the better model to tune hyperparameters
+  4. Threshold tuning: pick the cut-off that maximises recall ≥ 0.90
+  5. Final evaluation on the held-out test set
+  6. Save: scope_model.joblib, scope_preprocessor.joblib, scope_threshold.json
 
 Run from the project root:
     python -m src.model.train
 """
 
+import json
 import os
 import sys
 
@@ -20,52 +21,67 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     RocCurveDisplay,
     classification_report,
     confusion_matrix,
+    f1_score,
+    precision_recall_curve,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
-from sklearn.tree import plot_tree
-from imblearn.over_sampling import SMOTE
+from sklearn.model_selection import (
+    GridSearchCV,
+    StratifiedKFold,
+    cross_val_score,
+    train_test_split,
+)
 
-# ── allow ``python -m src.model.train`` from any cwd ──────────────────────────
+try:
+    from xgboost import XGBClassifier
+    _HAS_XGB = True
+except ImportError:
+    _HAS_XGB = False
+    print("[WARN] xgboost not installed — skipping XGBoost candidate.")
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
 
 from src.model.preprocess import build_preprocessor  # noqa: E402
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 0. Paths
-# ─────────────────────────────────────────────────────────────────────────────
 DATASET_PATH = os.path.join(BASE_DIR, "data", "processed", "dataset.csv")
 MODELS_DIR   = os.path.join(BASE_DIR, "models")
 PLOTS_DIR    = os.path.join(BASE_DIR, "reports", "figures")
+REPORTS_DIR  = os.path.join(BASE_DIR, "reports")
 
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(PLOTS_DIR,  exist_ok=True)
+os.makedirs(MODELS_DIR,  exist_ok=True)
+os.makedirs(PLOTS_DIR,   exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# feature columns (must match preprocess.py)
 NUMERICAL_FEATURES = [
     "days_since_created", "days_since_last_update", "num_versions",
     "release_velocity", "num_maintainers", "description_length",
+    "weekly_downloads", "typosquat_min_distance", "script_suspicion_score",
+    "maintainer_min_account_age_days",
     "stargazers_count", "forks_count", "open_issues_count",
     "subscribers_count", "contributor_count", "days_since_last_commit",
 ]
-BINARY_FEATURES = ["has_postinstall", "license_is_standard", "has_github_repo"]
-ALL_FEATURE_NAMES = NUMERICAL_FEATURES + BINARY_FEATURES   # order matches ColumnTransformer
+BINARY_FEATURES    = ["has_any_install_hook", "license_is_standard", "has_github_repo"]
+ALL_FEATURE_NAMES  = NUMERICAL_FEATURES + BINARY_FEATURES
+
+# ── Target recall floor for threshold selection (security bias) ──────
+MIN_RECALL = 0.90
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # 1. Load & split
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 print("=" * 60)
-print("SCOPE – Day 3 Training Script")
+print("SCOPE – Model Training")
 print("=" * 60)
 
 try:
@@ -74,234 +90,191 @@ except FileNotFoundError:
     sys.exit(f"[ERROR] Dataset not found at {DATASET_PATH}.\n"
              "Run src/data/build_dataset.py first.")
 
-print(f"\n[1] Dataset loaded  shape={df.shape}")
+print(f"\n[1] Dataset  shape={df.shape}")
 
-X = df.drop(columns=["label"])
+X = df[ALL_FEATURE_NAMES]
 y = df["label"]
 
-# Hold-out test set (15%) — do NOT touch until Day 8
-X_temp, X_test, y_temp, y_test = train_test_split(
+# 15 % stratified hold-out — never used for model selection
+X_dev, X_test, y_dev, y_test = train_test_split(
     X, y, test_size=0.15, stratify=y, random_state=42
 )
-
-# Validation set (~15% of total)
-X_train, X_val, y_train, y_val = train_test_split(
-    X_temp, y_temp, test_size=0.176, stratify=y_temp, random_state=42
-)
-
-print(f"    train={len(X_train)}  val={len(X_val)}  test={len(X_test)}")
+print(f"    dev={len(X_dev)}  test={len(X_test)}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Preprocess (fit on train only — no leakage)
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[2] Fitting preprocessor on X_train …")
+# ─────────────────────────────────────────────────────────────────────
+# 2. Preprocess (fit on dev only — no leakage into test)
+# ─────────────────────────────────────────────────────────────────────
+print("\n[2] Fitting preprocessor on dev set …")
 preprocessor = build_preprocessor()
-X_train_transformed = preprocessor.fit_transform(X_train)
-X_val_transformed   = preprocessor.transform(X_val)
-X_test_transformed  = preprocessor.transform(X_test)
+X_dev_t  = preprocessor.fit_transform(X_dev)
+X_test_t = preprocessor.transform(X_test)
 
-# Save fitted preprocessor for later inference
-joblib.dump(preprocessor, os.path.join(MODELS_DIR, "preprocessor.pkl"))
-print("    Preprocessor saved → models/preprocessor.pkl")
+joblib.dump(preprocessor, os.path.join(MODELS_DIR, "scope_preprocessor.joblib"))
+print("    Saved → models/scope_preprocessor.joblib")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. SMOTE (oversample minority class in training set only)
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# 3. SMOTE on dev set
+# ─────────────────────────────────────────────────────────────────────
 print("\n[3] Applying SMOTE …")
 sm = SMOTE(random_state=42)
-X_train_res, y_train_res = sm.fit_resample(X_train_transformed, y_train)
-
-_counts = pd.Series(y_train_res).value_counts().sort_index()
-print(f"    After SMOTE  →  class 0 (Healthy): {_counts[0]}   class 1 (Suspicious): {_counts[1]}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Train RandomForest baseline
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[4] Training RandomForestClassifier(n_estimators=100, random_state=42) …")
-rf = RandomForestClassifier(n_estimators=100, random_state=42)
-rf.fit(X_train_res, y_train_res)
-print("    Training complete.")
-
-# Save model
-joblib.dump(rf, os.path.join(MODELS_DIR, "rf_baseline.pkl"))
-print("    Model saved → models/rf_baseline.pkl")
+X_res, y_res = sm.fit_resample(X_dev_t, y_dev)
+counts = pd.Series(y_res).value_counts().sort_index()
+print(f"    After SMOTE → class 0: {counts[0]}  class 1: {counts[1]}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. Evaluate on VALIDATION set
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# 4. 5-fold CV to pick the best model family
+# ─────────────────────────────────────────────────────────────────────
+print("\n[4] 5-fold CV comparison (scoring = f1 on suspicious class) …")
+
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+candidates = {
+    "RandomForest": RandomForestClassifier(n_estimators=200, random_state=42),
+}
+if _HAS_XGB:
+    candidates["XGBoost"] = XGBClassifier(
+        n_estimators=200, random_state=42,
+        eval_metric="logloss", verbosity=0,
+    )
+
+cv_scores = {}
+for name, clf in candidates.items():
+    scores = cross_val_score(clf, X_res, y_res, cv=cv, scoring="f1", n_jobs=-1)
+    cv_scores[name] = scores
+    print(f"    {name:<20} CV F1 = {scores.mean():.4f} ± {scores.std():.4f}")
+
+best_name = max(cv_scores, key=lambda k: cv_scores[k].mean())
+print(f"\n    Winner: {best_name}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. GridSearchCV on the winning family
+# ─────────────────────────────────────────────────────────────────────
+print(f"\n[5] GridSearchCV on {best_name} …")
+
+if best_name == "RandomForest":
+    param_grid = {
+        "n_estimators": [200, 400],
+        "max_depth":    [None, 15, 30],
+        "min_samples_split": [2, 5],
+    }
+    base_clf = RandomForestClassifier(random_state=42)
+else:
+    param_grid = {
+        "n_estimators":  [200, 400],
+        "max_depth":     [4, 8],
+        "learning_rate": [0.05, 0.1],
+    }
+    base_clf = XGBClassifier(
+        random_state=42, eval_metric="logloss", verbosity=0
+    )
+
+grid = GridSearchCV(
+    base_clf, param_grid, cv=cv, scoring="f1",
+    n_jobs=-1, verbose=1, refit=True,
+)
+grid.fit(X_res, y_res)
+
+best_model = grid.best_estimator_
+print(f"    Best params : {grid.best_params_}")
+print(f"    Best CV F1  : {grid.best_score_:.4f}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 6. Threshold tuning — maximise recall with recall ≥ MIN_RECALL
+# ─────────────────────────────────────────────────────────────────────
+print(f"\n[6] Threshold tuning (target recall ≥ {MIN_RECALL}) …")
+
+y_dev_proba = best_model.predict_proba(X_dev_t)[:, 1]
+precision_arr, recall_arr, thresholds = precision_recall_curve(y_dev, y_dev_proba)
+
+# Among thresholds where recall ≥ MIN_RECALL, pick the one with highest F1
+best_thresh = 0.5
+best_f1_at_thresh = 0.0
+for p, r, t in zip(precision_arr[:-1], recall_arr[:-1], thresholds):
+    if r >= MIN_RECALL:
+        f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0
+        if f1 > best_f1_at_thresh:
+            best_f1_at_thresh = f1
+            best_thresh = float(t)
+
+print(f"    Chosen threshold : {best_thresh:.4f}")
+print(f"    F1 at threshold  : {best_f1_at_thresh:.4f}")
+
+threshold_path = os.path.join(MODELS_DIR, "scope_threshold.json")
+with open(threshold_path, "w") as fh:
+    json.dump({"threshold": best_thresh}, fh)
+print(f"    Saved → models/scope_threshold.json")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 7. Final test-set evaluation
+# ─────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
-print("[5] CLASSIFICATION REPORT  (evaluated on X_val)")
+print("[7] FINAL TEST-SET EVALUATION")
 print("=" * 60)
 
-y_val_pred = rf.predict(X_val_transformed)
-report = classification_report(y_val, y_val_pred, target_names=["Healthy", "Suspicious"])
-print(report)
+y_test_proba = best_model.predict_proba(X_test_t)[:, 1]
+y_test_pred  = (y_test_proba >= best_thresh).astype(int)
 
-# Derive false-negative rate from the confusion matrix
-cm = confusion_matrix(y_val, y_val_pred)
-# cm layout: [[TN, FP], [FN, TP]]
+print(classification_report(y_test, y_test_pred, target_names=["Healthy", "Suspicious"]))
+
+cm = confusion_matrix(y_test, y_test_pred)
 TN, FP, FN, TP = cm.ravel()
 fnr = FN / (FN + TP) if (FN + TP) > 0 else 0.0
-print(f"  False-Negative Rate (FNR) = FN/(FN+TP) = {FN}/({FN}+{TP}) = {fnr:.4f}")
-print(f"  → {fnr*100:.1f}% of suspicious packages were MISSED by the model.\n")
+auc = roc_auc_score(y_test, y_test_proba)
+f1  = f1_score(y_test, y_test_pred)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 6. Confusion matrix heatmap
-# ─────────────────────────────────────────────────────────────────────────────
-print("[6] Plotting confusion matrix …")
-fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
-sns.heatmap(
-    cm,
-    annot=True,
-    fmt="d",
-    cmap="Blues",
-    xticklabels=["Predicted Healthy", "Predicted Suspicious"],
-    yticklabels=["Actual Healthy",    "Actual Suspicious"],
-    ax=ax_cm,
-    linewidths=0.5,
-    linecolor="white",
-    annot_kws={"size": 14, "weight": "bold"},
-)
-ax_cm.set_title("Confusion Matrix – RF Baseline (Validation Set)", pad=12, fontsize=13)
-ax_cm.set_ylabel("True Label", fontsize=11)
-ax_cm.set_xlabel("Predicted Label", fontsize=11)
-
-# Add cell-level annotations
-cell_labels = [
-    (0, 0, f"TN\n{TN}"),
-    (0, 1, f"FP\n{FP}"),
-    (1, 0, f"FN\n{FN}"),
-    (1, 1, f"TP\n{TP}"),
-]
-for row, col, label in cell_labels:
-    ax_cm.text(
-        col + 0.5, row + 0.72,
-        label.split("\n")[0],
-        ha="center", va="center",
-        fontsize=9, color="grey",
-    )
-
-fig_cm.tight_layout()
-cm_path = os.path.join(PLOTS_DIR, "confusion_matrix_rf_baseline.png")
-fig_cm.savefig(cm_path, dpi=150)
-print(f"    Saved → {cm_path}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7. Tree visualisation – single estimator, max_depth=3
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[7] Plotting single decision tree (estimators_[0], max_depth=3) …")
-single_tree = rf.estimators_[0]
-
-fig_tree, ax_tree = plt.subplots(figsize=(22, 9))
-plot_tree(
-    single_tree,
-    max_depth=3,
-    feature_names=ALL_FEATURE_NAMES,
-    class_names=["Healthy", "Suspicious"],
-    filled=True,
-    rounded=True,
-    impurity=True,       # shows gini value in every node
-    proportion=False,    # shows raw sample counts
-    fontsize=9,
-    ax=ax_tree,
-)
-ax_tree.set_title(
-    "Single Decision Tree from Random Forest  (max_depth=3)\n"
-    "Colour intensity = class purity  |  Gini: 0 = pure, 0.5 = maximally impure",
-    fontsize=12, pad=14,
-)
-fig_tree.tight_layout()
-tree_path = os.path.join(PLOTS_DIR, "single_tree_depth3.png")
-fig_tree.savefig(tree_path, dpi=150, bbox_inches="tight")
-print(f"    Saved → {tree_path}")
-
-# Print the root split for study
-from sklearn.tree import _tree  # noqa: E402
-tree_obj = single_tree.tree_
-root_feature   = ALL_FEATURE_NAMES[tree_obj.feature[0]]
-root_threshold = tree_obj.threshold[0]
-root_gini      = tree_obj.impurity[0]
-print(f"\n  ROOT NODE:")
-print(f"    Feature   : {root_feature}")
-print(f"    Threshold : {root_threshold:.4f}")
-print(f"    Gini      : {root_gini:.4f}  (closer to 0 → purer split)")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 8. Feature importances – horizontal bar chart (descending)
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[8] Plotting feature importances …")
-importances = rf.feature_importances_
-indices = np.argsort(importances)[::-1]          # descending order
-sorted_names  = [ALL_FEATURE_NAMES[i] for i in indices]
-sorted_values = importances[indices]
-
-fig_fi, ax_fi = plt.subplots(figsize=(9, 6))
-colors = ["#e63946" if v >= np.median(sorted_values) else "#457b9d" for v in sorted_values]
-bars = ax_fi.barh(sorted_names[::-1], sorted_values[::-1], color=colors[::-1], edgecolor="white")
-
-for bar, val in zip(bars, sorted_values[::-1]):
-    ax_fi.text(
-        bar.get_width() + 0.002, bar.get_y() + bar.get_height() / 2,
-        f"{val:.3f}", va="center", fontsize=8,
-    )
-
-ax_fi.set_xlabel("Mean Decrease in Impurity (Feature Importance)", fontsize=11)
-ax_fi.set_title("RF Baseline – Feature Importances (sorted descending)", fontsize=13)
-ax_fi.axvline(x=0.01, color="grey", linestyle="--", linewidth=0.8, label="0.01 threshold")
-ax_fi.legend(fontsize=9)
-ax_fi.set_xlim(0, sorted_values.max() * 1.18)
-fig_fi.tight_layout()
-fi_path = os.path.join(PLOTS_DIR, "feature_importances_rf_baseline.png")
-fig_fi.savefig(fi_path, dpi=150)
-print(f"    Saved → {fi_path}")
-
-print("\n  Feature importances (descending):")
-for name, val in zip(sorted_names, sorted_values):
-    bar_vis = "█" * int(val * 200)
-    marker  = "  ← near-zero, candidate for removal" if val < 0.01 else ""
-    print(f"    {name:<30} {val:.4f}  {bar_vis}{marker}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 9. ROC curve + AUC (probability-based)
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[9] Plotting ROC curve …")
-fig_roc, ax_roc = plt.subplots(figsize=(7, 6))
-RocCurveDisplay.from_estimator(rf, X_val_transformed, y_val, ax=ax_roc, name="RF Baseline")
-ax_roc.plot([0, 1], [0, 1], "k--", linewidth=0.8, label="Random classifier")
-ax_roc.set_title("ROC Curve – RF Baseline (Validation Set)", fontsize=13)
-ax_roc.legend(fontsize=10)
-fig_roc.tight_layout()
-roc_path = os.path.join(PLOTS_DIR, "roc_curve_rf_baseline.png")
-fig_roc.savefig(roc_path, dpi=150)
-print(f"    Saved → {roc_path}")
-
-y_val_proba = rf.predict_proba(X_val_transformed)[:, 1]
-auc = roc_auc_score(y_val, y_val_proba)
-print(f"\n  AUC (probability-based) = {auc:.4f}")
-print(f"  Interpretation: the model ranks a random suspicious package above a random healthy one "
-      f"{auc*100:.1f}% of the time.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 10. Summary
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("SUMMARY")
-print("=" * 60)
+print(f"  Threshold used : {best_thresh:.4f}")
+print(f"  ROC-AUC        : {auc:.4f}")
+print(f"  F1 (suspicious): {f1:.4f}")
+print(f"  FNR            : {fnr*100:.1f}%  ({FN} missed)")
 print(f"  TN={TN}  FP={FP}  FN={FN}  TP={TP}")
-print(f"  False-Negative Rate : {fnr*100:.1f}%")
-print(f"  ROC-AUC             : {auc:.4f}")
-print(f"\nSaved plots:")
-for p in [cm_path, tree_path, fi_path, roc_path]:
-    print(f"  {p}")
-print("\nDone.")
+
+report_path = os.path.join(REPORTS_DIR, "final_evaluation.txt")
+with open(report_path, "w") as fh:
+    fh.write(f"Model        : {best_name}\n")
+    fh.write(f"Best params  : {grid.best_params_}\n")
+    fh.write(f"Threshold    : {best_thresh:.4f}\n")
+    fh.write(f"ROC-AUC      : {auc:.4f}\n")
+    fh.write(f"F1 (sus)     : {f1:.4f}\n")
+    fh.write(f"FNR          : {fnr*100:.1f}%\n")
+    fh.write(f"TN={TN}  FP={FP}  FN={FN}  TP={TP}\n\n")
+    fh.write(classification_report(y_test, y_test_pred,
+                                   target_names=["Healthy", "Suspicious"]))
+print(f"\n    Saved → {report_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 8. Plots
+# ─────────────────────────────────────────────────────────────────────
+print("\n[8] Generating plots …")
+
+fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+ConfusionMatrixDisplay(cm, display_labels=["Healthy", "Suspicious"]).plot(ax=ax_cm)
+ax_cm.set_title(f"Confusion Matrix — {best_name} (Test Set, threshold={best_thresh:.2f})")
+fig_cm.tight_layout()
+fig_cm.savefig(os.path.join(PLOTS_DIR, "confusion_matrix_final.png"), dpi=150)
+print("    Saved → reports/figures/confusion_matrix_final.png")
+
+fig_roc, ax_roc = plt.subplots(figsize=(7, 6))
+RocCurveDisplay.from_predictions(y_test, y_test_proba, ax=ax_roc, name=best_name)
+ax_roc.plot([0, 1], [0, 1], "k--", linewidth=0.8)
+ax_roc.set_title(f"ROC Curve — {best_name} (Test Set, AUC={auc:.4f})")
+fig_roc.tight_layout()
+fig_roc.savefig(os.path.join(PLOTS_DIR, "roc_curve_final.png"), dpi=150)
+print("    Saved → reports/figures/roc_curve_final.png")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 9. Save model
+# ─────────────────────────────────────────────────────────────────────
+model_path = os.path.join(MODELS_DIR, "scope_model.joblib")
+joblib.dump(best_model, model_path)
+print(f"\n[9] Model saved → models/scope_model.joblib")
 
 plt.show()
+print("\nDone.")

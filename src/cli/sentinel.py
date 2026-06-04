@@ -15,7 +15,7 @@ from rich.panel import Panel
 # Add src to path if needed
 sys.path.append(os.getcwd())
 
-from src.data.npm_fetcher import fetch_npm_raw
+from src.data.npm_fetcher import fetch_npm_raw, fetch_package_downloads, fetch_maintainer_age
 from src.data.github_fetcher import fetch_github_stats
 from src.data.feature_engineer import engineer_features
 from src.model.explain import get_shap_explainer, explain_single_prediction
@@ -27,36 +27,64 @@ console = Console()
 
 VERSION = "1.0.0"
 
+# Feature names must match what the preprocessor was trained on
+_FEATURE_NAMES = [
+    "days_since_created", "days_since_last_update", "num_versions",
+    "release_velocity", "num_maintainers", "description_length",
+    "weekly_downloads", "typosquat_min_distance", "script_suspicion_score",
+    "maintainer_min_account_age_days",
+    "stargazers_count", "forks_count", "open_issues_count",
+    "subscribers_count", "contributor_count", "days_since_last_commit",
+    "has_any_install_hook", "license_is_standard", "has_github_repo",
+]
+
+DEFAULT_THRESHOLD = 0.5
+
+
 class PackageNotFoundError(Exception):
     """Raised when a package is not found on npm."""
     pass
 
 class ScopeEngine:
-    def __init__(self, 
-                 model_path="models/scope_model.joblib", 
-                 scaler_path="models/scope_scaler.joblib",
+    def __init__(self,
+                 model_path="models/scope_model.joblib",
+                 preprocessor_path="models/scope_preprocessor.joblib",
+                 threshold_path="models/scope_threshold.json",
                  popular_pkgs_path="data/healthy_packages.txt"):
-        # Load model and scaler
-        if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-            raise FileNotFoundError(f"Model ({model_path}) or scaler ({scaler_path}) not found. Please run training first.")
-        
+
+        # Accept legacy scaler path as fallback so old models still work
+        scaler_path = "models/scope_scaler.joblib"
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Model not found at {model_path}. Please run training first."
+            )
+
         self.model = joblib.load(model_path)
-        self.scaler = joblib.load(scaler_path)
-        
-        # XGBoost/RF models might store feature_names. 
-        if hasattr(self.model, "feature_names_in_"):
-            self.feature_names = self.model.feature_names_in_.tolist()
+
+        # Prefer new preprocessor (ColumnTransformer); fall back to legacy scaler
+        if os.path.exists(preprocessor_path):
+            self.preprocessor = joblib.load(preprocessor_path)
+            self._legacy_scaler = False
+        elif os.path.exists(scaler_path):
+            self.preprocessor = joblib.load(scaler_path)
+            self._legacy_scaler = True
+            console.print("[yellow]Using legacy scaler — retrain for full feature support.[/yellow]")
         else:
-            self.feature_names = [
-                "days_since_created", "days_since_last_update", "num_versions", 
-                "release_velocity", "num_maintainers", "has_postinstall", "description_length", 
-                "license_is_standard", "has_github_repo", "stargazers_count", "forks_count", 
-                "open_issues_count", "subscribers_count", "contributor_count", "days_since_last_commit"
-            ]
-        
+            raise FileNotFoundError(
+                f"Neither {preprocessor_path} nor {scaler_path} found. Run training first."
+            )
+
+        # Load tuned classification threshold
+        self.threshold = DEFAULT_THRESHOLD
+        if os.path.exists(threshold_path):
+            with open(threshold_path) as fh:
+                self.threshold = json.load(fh).get("threshold", DEFAULT_THRESHOLD)
+
+        self.feature_names = _FEATURE_NAMES
+
         self.explainer = get_shap_explainer(self.model)
-        
-        # Load popular packages for typosquatting detection
+
+        # Load popular packages for typosquat detection
         self.popular_packages = []
         if os.path.exists(popular_pkgs_path):
             with open(popular_pkgs_path, "r", encoding="utf-8") as f:
@@ -82,66 +110,86 @@ class ScopeEngine:
 
     def analyze(self, package_name, skip_suggestion=False, use_cache=True):
         """Analyze a single package."""
-        # Check cache first (unless skip_suggestion is True, which is used for recursion)
         if use_cache and not skip_suggestion:
             cached = ScopeCache.get(package_name)
             if cached:
                 return cached
-        
+
         warnings = []
         try:
-            # 1. Fetch NPM
+            # 1. Fetch npm metadata
             npm_raw = fetch_npm_raw(package_name)
             if not npm_raw:
                 raise PackageNotFoundError(f"Package '{package_name}' not found on npm.")
-            
-            # 2. Fetch GitHub
+
+            # 2. Fetch GitHub metadata
             repo_field = npm_raw.get("repository")
             if not repo_field:
                 warnings.append("No repository link found (potential risk factor).")
-                
             github_stats = fetch_github_stats(repo_field)
             if not github_stats.get("has_github_repo", 0) and repo_field:
                 warnings.append("GitHub data unavailable (rate-limited or not found). Proceeding with zeros.")
-            
-            # 3. Engineer features
-            features = engineer_features(npm_raw, github_stats)
-            
-            # 4. Preprocess
+
+            # 3. Fetch download count and maintainer age (new signals)
+            weekly_downloads = fetch_package_downloads(package_name)
+            maintainers = npm_raw.get("maintainers", [])
+            maintainer_min_age = fetch_maintainer_age(maintainers)
+
+            # 4. Engineer features (pass popular packages for typosquat distance)
+            features = engineer_features(
+                npm_raw,
+                github_stats,
+                weekly_downloads=weekly_downloads,
+                maintainer_min_age_days=maintainer_min_age,
+                popular_names=self.popular_packages,
+            )
+
+            # 5. Preprocess
             X_df = pd.DataFrame([features])
-            X_data = X_df[self.feature_names]
-            X_scaled = self.scaler.transform(X_data)
-            
-            # 5. Predict
-            score = float(self.model.predict_proba(X_scaled)[0, 1])
-            
-            # 6. Explain
-            explanations = explain_single_prediction(self.explainer, X_scaled, self.feature_names)
-            
+            # Legacy path: old scaler expects original 15 features only
+            if self._legacy_scaler:
+                legacy_cols = [
+                    "days_since_created", "days_since_last_update", "num_versions",
+                    "release_velocity", "num_maintainers", "has_postinstall",
+                    "description_length", "license_is_standard", "has_github_repo",
+                    "stargazers_count", "forks_count", "open_issues_count",
+                    "subscribers_count", "contributor_count", "days_since_last_commit",
+                ]
+                X_data = X_df.reindex(columns=legacy_cols, fill_value=0)
+            else:
+                X_data = X_df[self.feature_names]
+            X_transformed = self.preprocessor.transform(X_data)
+
+            # 6. Predict using tuned threshold
+            raw_score = float(self.model.predict_proba(X_transformed)[0, 1])
+            score = raw_score  # expose raw probability; threshold used for risk_level only
+
+            # 7. Explain
+            explanations = explain_single_prediction(
+                self.explainer, X_transformed, self.feature_names
+            )
+
             result = {
-                "package": package_name,
-                "score": score,
-                "risk_level": self._get_risk_level(score),
-                "features": features,
+                "package":      package_name,
+                "score":        score,
+                "risk_level":   self._get_risk_level(score),
+                "features":     features,
                 "explanations": explanations,
-                "warnings": warnings
+                "warnings":     warnings,
             }
 
-            # 7. Typosquatting Check
+            # 8. Typosquatting check (post-hoc suggestion)
             if not skip_suggestion and result["risk_level"] in ["HIGH", "CRITICAL"]:
                 suggestion = self.suggest_intended_package(package_name)
                 if suggestion:
-                    # Fetch score for the suggested (popular) package for comparison
-                    # skip_suggestion=True to avoid infinite recursion
                     s_result = self.analyze(suggestion["name"], skip_suggestion=True)
                     if "score" in s_result:
                         suggestion["score"] = s_result["score"]
                         result["suggestion"] = suggestion
 
-            # Cache the result
             ScopeCache.set(package_name, result)
-            
             return result
+
         except PackageNotFoundError as e:
             return {"package": package_name, "error": str(e), "status": "NOT_FOUND"}
         except Exception as e:
@@ -149,9 +197,10 @@ class ScopeEngine:
 
 
     def _get_risk_level(self, score):
-        if score < 0.2: return "HEALTHY"
-        if score < 0.5: return "MEDIUM"
-        if score < 0.8: return "HIGH"
+        t = self.threshold
+        if score < t * 0.4:   return "HEALTHY"
+        if score < t:         return "MEDIUM"
+        if score < t + 0.3:   return "HIGH"
         return "CRITICAL"
 
     def analyze_many(self, package_names, use_cache=True):

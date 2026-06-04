@@ -9,6 +9,15 @@ build/
 eggs/
 *.egg
 
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Jupyter
+.ipynb_checkpoints/
+
 # Virtual environments
 venv/
 env/
@@ -35,6 +44,12 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+
+# Generated reports (plots and eval text — reproducible by retraining)
+reports/figures/
+reports/*.txt
+reports/*.json
+!reports/.gitkeep
 
 # Logs
 *.log

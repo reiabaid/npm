@@ -12,6 +12,7 @@ import random
 import os
 import time
 import json
+import re
 
 # ─────────────────── 1. Fetch Top 500 npm Packages ───────────────────
 
@@ -387,6 +388,33 @@ CONFIRMED_MALICIOUS_PACKAGES = [
 CONFIRMED_MALICIOUS_PACKAGES = list(dict.fromkeys(CONFIRMED_MALICIOUS_PACKAGES))
 
 
+def fetch_ghsa_malicious_npm(max_count=200):
+    """Fetch confirmed malicious npm packages from the GitHub Advisory Database."""
+    packages = []
+    headers = {"Accept": "application/vnd.github+json"}
+    # GHSA public API — no auth needed, returns malware advisories
+    url = "https://api.github.com/advisories"
+    params = {"type": "malware", "ecosystem": "npm", "per_page": 100}
+    print("[FETCH] GitHub Advisory Database (malware, ecosystem=npm)...")
+    try:
+        resp = requests.get(url, params=params, timeout=30, headers=headers)
+        if resp.status_code == 200:
+            advisories = resp.json()
+            for advisory in advisories:
+                for vuln in advisory.get("vulnerabilities", []):
+                    pkg = vuln.get("package", {})
+                    if pkg.get("ecosystem") == "npm":
+                        name = pkg.get("name")
+                        if name and name not in packages:
+                            packages.append(name)
+            print(f"  -> Got {len(packages)} malicious package names from GHSA")
+        else:
+            print(f"  -> GHSA API returned HTTP {resp.status_code}")
+    except Exception as e:
+        print(f"  -> GHSA API error: {e}")
+    return packages[:max_count]
+
+
 # ── 3. Generate Synthetic Typosquats ─────────────────────────────────
 
 def generate_typosquats(packages, count=100):
@@ -514,11 +542,19 @@ def main():
     # ── Step 2: Malicious packages ──
     print(f"\n▸ Step 2: Compiling confirmed malicious packages...")
     malicious = CONFIRMED_MALICIOUS_PACKAGES.copy()
-    print(f"  -> {len(malicious)} confirmed malicious packages compiled")
+    print(f"  -> {len(malicious)} hand-curated malicious packages")
+
+    ghsa_pkgs = fetch_ghsa_malicious_npm(max_count=200)
+    known = set(malicious)
+    for pkg in ghsa_pkgs:
+        if pkg not in known:
+            malicious.append(pkg)
+            known.add(pkg)
+    print(f"  -> {len(malicious)} total malicious packages after GHSA merge")
 
     # ── Step 3: Generate typosquats ──
-    print(f"\n▸ Step 3: Generating 100 synthetic typosquats from top 50...")
-    typosquats = generate_typosquats(healthy, count=100)
+    print(f"\n▸ Step 3: Generating 200 synthetic typosquats from top 50...")
+    typosquats = generate_typosquats(healthy, count=200)
     print(f"  -> {len(typosquats)} synthetic typosquats generated")
 
     # ── Step 4: Write files ──
@@ -547,7 +583,7 @@ def main():
         f.write(f"#          Snyk, Socket.dev, JFrog, Checkmarx, news reports\n")
         f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"# Total: {len(suspicious)}  "
-                f"(confirmed malicious: {len(malicious)}, "
+                f"(confirmed malicious: {len(malicious)} [hand-curated + GHSA], "
                 f"synthetic typosquats: {len(typosquats)})\n\n")
 
         f.write("# ── Confirmed Malicious Packages ──\n")

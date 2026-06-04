@@ -60,16 +60,49 @@ def parse_package_metadata(raw: dict) -> dict:
 
 
 def fetch_package_downloads(package_name: str,
-                            period: str = "last-month") -> Optional[dict]:
-    """Fetch download statistics for a given NPM package."""
+                            period: str = "last-week") -> int:
+    """Return weekly download count for a package, or 0 on failure."""
     url = f"{NPM_DOWNLOADS_URL}/{period}/{package_name}"
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Could not fetch downloads for '{package_name}': {e}")
-        return None
+        return response.json().get("downloads", 0) or 0
+    except requests.exceptions.RequestException:
+        return 0
+
+
+def fetch_maintainer_age(maintainers: list) -> int:
+    """Return the age in days of the *newest* maintainer account (min across all).
+
+    Uses the npm user profile endpoint. Returns 0 if no accounts can be fetched,
+    which is treated as maximally suspicious (unknown/new account).
+    """
+    if not maintainers:
+        return 0
+
+    from datetime import datetime, timezone
+
+    min_age = None
+    for m in maintainers:
+        username = m.get("name") if isinstance(m, dict) else str(m)
+        if not username:
+            continue
+        url = f"{NPM_REGISTRY_URL}/-/user/org.couchdb.user/{username}"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                created_str = resp.json().get("created")
+                if created_str:
+                    created = datetime.fromisoformat(
+                        created_str.replace("Z", "+00:00")
+                    )
+                    age = (datetime.now(timezone.utc) - created).days
+                    if min_age is None or age < min_age:
+                        min_age = age
+        except requests.exceptions.RequestException:
+            continue
+
+    return min_age if min_age is not None else 0
 
 
 def save_raw_json(data: dict, package_name: str,

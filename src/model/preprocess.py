@@ -23,18 +23,22 @@ numerical_features = [
     'release_velocity',
     'num_maintainers',
     'description_length',
+    'weekly_downloads',
+    'typosquat_min_distance',
+    'script_suspicion_score',
+    'maintainer_min_account_age_days',
     'stargazers_count',
     'forks_count',
     'open_issues_count',
     'subscribers_count',
     'contributor_count',
-    'days_since_last_commit'
+    'days_since_last_commit',
 ]
 
 binary_features = [
-    'has_postinstall',
+    'has_any_install_hook',
     'license_is_standard',
-    'has_github_repo'
+    'has_github_repo',
 ]
 
 categorical_features = [] # Currently, all engineered features are numerical or binary.
