@@ -82,7 +82,10 @@ class ScopeEngine:
 
         self.feature_names = _FEATURE_NAMES
 
-        self.explainer = get_shap_explainer(self.model)
+        try:
+            self.explainer = get_shap_explainer(self.model)
+        except Exception:
+            self.explainer = None
 
         # Load popular packages for typosquat detection
         self.popular_packages = []
@@ -150,7 +153,7 @@ class ScopeEngine:
             if self._legacy_scaler:
                 legacy_cols = [
                     "days_since_created", "days_since_last_update", "num_versions",
-                    "release_velocity", "num_maintainers", "has_postinstall",
+                    "release_velocity", "num_maintainers", "has_any_install_hook",
                     "description_length", "license_is_standard", "has_github_repo",
                     "stargazers_count", "forks_count", "open_issues_count",
                     "subscribers_count", "contributor_count", "days_since_last_commit",
@@ -165,9 +168,12 @@ class ScopeEngine:
             score = raw_score  # expose raw probability; threshold used for risk_level only
 
             # 7. Explain
-            explanations = explain_single_prediction(
-                self.explainer, X_transformed, self.feature_names
-            )
+            if self.explainer is not None:
+                explanations = explain_single_prediction(
+                    self.explainer, X_transformed, self.feature_names
+                )
+            else:
+                explanations = []
 
             result = {
                 "package":      package_name,
@@ -191,7 +197,12 @@ class ScopeEngine:
             return result
 
         except PackageNotFoundError as e:
-            return {"package": package_name, "error": str(e), "status": "NOT_FOUND"}
+            result = {"package": package_name, "error": str(e), "status": "NOT_FOUND"}
+            # Still try typosquat suggestion — common when someone misspells a name
+            suggestion = self.suggest_intended_package(package_name)
+            if suggestion:
+                result["suggestion"] = suggestion
+            return result
         except Exception as e:
             return {"package": package_name, "error": str(e), "status": "ERROR"}
 

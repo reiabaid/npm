@@ -148,22 +148,29 @@ class TestEngineerFeatures:
         """Test detection of postinstall script."""
         minimal_npm_raw["versions"]["2.0.0"]["scripts"] = {"postinstall": "node install.js"}
         result = engineer_features(minimal_npm_raw, minimal_github_raw)
-        
-        assert result["has_postinstall"] == 1
-    
-    def test_engineer_features_no_postinstall_script(self, minimal_npm_raw, minimal_github_raw):
-        """Test when postinstall script is absent."""
+
+        assert result["has_any_install_hook"] == 1
+
+    def test_engineer_features_preinstall_script(self, minimal_npm_raw, minimal_github_raw):
+        """Test detection of preinstall script."""
+        minimal_npm_raw["versions"]["2.0.0"]["scripts"] = {"preinstall": "node pre.js"}
+        result = engineer_features(minimal_npm_raw, minimal_github_raw)
+
+        assert result["has_any_install_hook"] == 1
+
+    def test_engineer_features_no_install_hook(self, minimal_npm_raw, minimal_github_raw):
+        """Test when no install lifecycle script is present."""
         minimal_npm_raw["versions"]["2.0.0"]["scripts"] = {"test": "jest"}
         result = engineer_features(minimal_npm_raw, minimal_github_raw)
-        
-        assert result["has_postinstall"] == 0
-    
+
+        assert result["has_any_install_hook"] == 0
+
     def test_engineer_features_empty_scripts(self, minimal_npm_raw, minimal_github_raw):
         """Test with empty scripts dict."""
         minimal_npm_raw["versions"]["2.0.0"]["scripts"] = {}
         result = engineer_features(minimal_npm_raw, minimal_github_raw)
-        
-        assert result["has_postinstall"] == 0
+
+        assert result["has_any_install_hook"] == 0
     
     def test_engineer_features_no_description(self, minimal_npm_raw, minimal_github_raw):
         """Test with missing description."""
@@ -254,7 +261,7 @@ class TestEngineerFeatures:
     def test_engineer_features_all_fields_present(self, minimal_npm_raw, minimal_github_raw):
         """Test that all expected feature keys are present in output."""
         result = engineer_features(minimal_npm_raw, minimal_github_raw)
-        
+
         expected_keys = {
             "name",
             "days_since_created",
@@ -262,8 +269,12 @@ class TestEngineerFeatures:
             "num_versions",
             "release_velocity",
             "num_maintainers",
-            "has_postinstall",
             "description_length",
+            "weekly_downloads",
+            "typosquat_min_distance",
+            "script_suspicion_score",
+            "maintainer_min_account_age_days",
+            "has_any_install_hook",
             "license_is_standard",
             "has_github_repo",
             "stargazers_count",
@@ -273,7 +284,7 @@ class TestEngineerFeatures:
             "contributor_count",
             "days_since_last_commit",
         }
-        
+
         assert set(result.keys()) == expected_keys
     
     def test_engineer_features_large_version_count(self, minimal_npm_raw, minimal_github_raw):
@@ -370,5 +381,5 @@ class TestIntegration:
         assert result["num_versions"] == 22
         assert result["num_maintainers"] == 1
         assert result["stargazers_count"] == 55000
-        assert result["has_postinstall"] == 0
+        assert result["has_any_install_hook"] == 0
         assert result["license_is_standard"] == 1

@@ -7,8 +7,6 @@ import os
 import sys
 import warnings
 import joblib
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
@@ -32,29 +30,35 @@ os.makedirs(PLOTS_DIR,  exist_ok=True)
 NUMERICAL_FEATURES = [
     "days_since_created", "days_since_last_update", "num_versions",
     "release_velocity", "num_maintainers", "description_length",
+    "weekly_downloads", "typosquat_min_distance", "script_suspicion_score",
+    "maintainer_min_account_age_days",
     "stargazers_count", "forks_count", "open_issues_count",
     "subscribers_count", "contributor_count", "days_since_last_commit",
 ]
-BINARY_FEATURES = ["has_postinstall", "license_is_standard", "has_github_repo"]
+BINARY_FEATURES = ["has_any_install_hook", "license_is_standard", "has_github_repo"]
 ALL_FEATURES    = NUMERICAL_FEATURES + BINARY_FEATURES
 
 # Human-readable label mapping
 FEATURE_LABELS: dict[str, str] = {
-    "days_since_created":      "Package age (days)",
-    "days_since_last_update":  "Days since last update",
-    "num_versions":            "Number of published versions",
-    "release_velocity":        "Release velocity (versions/day)",
-    "num_maintainers":         "Number of maintainers",
-    "description_length":      "Description length (chars)",
-    "stargazers_count":        "GitHub stars",
-    "forks_count":             "GitHub forks",
-    "open_issues_count":       "Open GitHub issues",
-    "subscribers_count":       "GitHub subscribers / watchers",
-    "contributor_count":       "Total contributors",
-    "days_since_last_commit":  "Days since last commit",
-    "has_postinstall":         "Has postinstall script",
-    "license_is_standard":     "Uses a standard licence",
-    "has_github_repo":         "Has linked GitHub repo",
+    "days_since_created":              "Package age (days)",
+    "days_since_last_update":          "Days since last update",
+    "num_versions":                    "Number of published versions",
+    "release_velocity":                "Release velocity (versions/day)",
+    "num_maintainers":                 "Number of maintainers",
+    "description_length":              "Description length (chars)",
+    "weekly_downloads":                "Weekly download count",
+    "typosquat_min_distance":          "Edit distance to nearest popular package",
+    "script_suspicion_score":          "Dangerous patterns in install scripts",
+    "maintainer_min_account_age_days": "Age of newest maintainer account (days)",
+    "stargazers_count":                "GitHub stars",
+    "forks_count":                     "GitHub forks",
+    "open_issues_count":               "Open GitHub issues",
+    "subscribers_count":               "GitHub subscribers / watchers",
+    "contributor_count":               "Total contributors",
+    "days_since_last_commit":          "Days since last commit",
+    "has_any_install_hook":            "Has install lifecycle script",
+    "license_is_standard":             "Uses a standard license",
+    "has_github_repo":                 "Has linked GitHub repo",
 }
 
 def get_shap_explainer(model):
@@ -118,6 +122,7 @@ def generate_health_score_text(pred_proba, shap_vals_single, feature_names=None,
     }
 
 def main():
+    import matplotlib.pyplot as plt
     from sklearn.model_selection import train_test_split
     from imblearn.over_sampling import SMOTE
     from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score

@@ -39,9 +39,10 @@ Thumbs.db
 *.pt
 *.onnx
 
-# Data (keep structure, ignore large files)
+# Data (keep structure, ignore large/generated files)
 data/raw/*
 data/processed/*
+data/hard_negatives.txt
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 

@@ -24,9 +24,22 @@ def build_risk_bar(score: float, width: int = 20) -> Text:
 
 def format_result(result: dict) -> Panel:
     """Format a single package analysis result into a rich Panel."""
+    if result.get("status") == "NOT_FOUND":
+        body = Text()
+        body.append(f"  {result.get('package', 'Unknown')}", style="bold cyan")
+        body.append(" was not found on npm.\n\n", style="white")
+        body.append("  This package does not exist in the npm registry.\n", style="dim")
+        body.append("  Check the spelling, or it may have been unpublished.\n", style="dim")
+        if result.get("suggestion"):
+            s = result["suggestion"]
+            body.append(f"\n  Did you mean: ", style="bold")
+            body.append(f"{s['name']}", style="bold cyan")
+            body.append(f"?  ({s['similarity']:.0%} similar)\n", style="dim")
+        return Panel(body, title="[bold yellow]Package Not Found[/bold yellow]", border_style="yellow")
+
     if "error" in result:
         return Panel(
-            Text(f"X {result.get('package', 'Unknown')}: {result['error']}", style="bold red"),
+            Text(f"  {result.get('package', 'Unknown')}: {result['error']}", style="bold red"),
             title="[bold red]Analysis Error[/bold red]",
             border_style="red"
         )

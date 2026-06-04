@@ -1,0 +1,26 @@
+name: SCOPE Scan
+
+on:
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+
+jobs:
+  scope-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SCOPE
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Run SCOPE batch scan
+        run: scope batch package.json --json --fail-on-high
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

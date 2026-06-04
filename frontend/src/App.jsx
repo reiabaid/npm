@@ -15,11 +15,16 @@ const FEATURE_MEANINGS = {
   num_versions: "Version history helps show package maturity.",
   release_velocity: "Burst releases can be suspicious.",
   num_maintainers: "More maintainers usually reduce single-point control risk.",
+  has_any_install_hook: "Install lifecycle scripts are a common malware execution path.",
   has_postinstall: "Postinstall scripts are a common malware execution path.",
   has_github_repo: "Missing repository lowers verification confidence.",
   stargazers_count: "Stars are a rough adoption and trust signal.",
   forks_count: "Forks indicate ecosystem interest and review depth.",
   contributor_count: "Higher contributor count implies broader ownership.",
+  weekly_downloads: "Very low download counts can indicate a throwaway package.",
+  typosquat_min_distance: "Small edit distance to a popular package name is suspicious.",
+  script_suspicion_score: "Dangerous patterns found in install scripts.",
+  maintainer_min_account_age_days: "Newly created maintainer accounts are higher risk.",
 };
 
 function normalizePackageName(value) {
@@ -211,6 +216,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [error, setError] = useState("");
+  const [notFound, setNotFound] = useState(null); // { name, suggestion? }
   const [result, setResult] = useState(null);
   const [recentAnalyses, setRecentAnalyses] = useState([]);
   const [recentOpen, setRecentOpen] = useState(false);
@@ -233,6 +239,8 @@ export default function App() {
 
     setPackageName(trimmed);
     setError("");
+    setNotFound(null);
+    setResult(null);
     setLoading(true);
     setStepIndex(0);
 
@@ -244,6 +252,15 @@ export default function App() {
       });
 
       const body = await readResponseBody(response);
+
+      if (response.status === 404) {
+        // Package doesn't exist on npm — show dedicated not-found state
+        setNotFound({
+          name: trimmed,
+          suggestion: body?.suggestion || null,
+        });
+        return null;
+      }
 
       if (!response.ok) {
         const message = typeof body === "string" ? body : body?.detail || "Analysis failed.";
@@ -259,7 +276,7 @@ export default function App() {
     } catch (err) {
       setResult(null);
       if (err.name === "TypeError" || /fetch/i.test(err.message || "")) {
-        setError("Cannot reach server");
+        setError("Cannot reach server. Is the API running?");
       } else {
         setError(err.message || "Something went wrong.");
       }
@@ -316,9 +333,9 @@ export default function App() {
           meaning: "Probability-like risk output from 0 to 1.",
         },
         {
-          label: "Postinstall",
-          value: result.features?.has_postinstall ? "yes" : "no",
-          meaning: FEATURE_MEANINGS.has_postinstall,
+          label: "Install hook",
+          value: result.features?.has_any_install_hook ? "yes" : "no",
+          meaning: FEATURE_MEANINGS.has_any_install_hook,
         },
         {
           label: "Maintainers",
@@ -389,6 +406,28 @@ export default function App() {
         {error && (
           <section className="glass card error-card reveal reveal-delay-2">
             <p>{error}</p>
+          </section>
+        )}
+
+        {notFound && !loading && (
+          <section className="glass card error-card reveal reveal-delay-2">
+            <p>
+              <strong>&ldquo;{notFound.name}&rdquo;</strong> was not found on npm. Check the
+              spelling, or this package may have been unpublished.
+            </p>
+            {notFound.suggestion && (
+              <p>
+                Did you mean{" "}
+                <button
+                  type="button"
+                  className="inline-link"
+                  onClick={() => analyzePackage(notFound.suggestion.name)}
+                >
+                  {notFound.suggestion.name}
+                </button>
+                ?
+              </p>
+            )}
           </section>
         )}
 

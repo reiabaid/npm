@@ -11,7 +11,9 @@ NPM_DOWNLOADS_URL = "https://api.npmjs.org/downloads/point"
 
 def fetch_npm_raw(package_name: str) -> Optional[dict]:
     """Fetch raw metadata for a package from the NPM registry."""
-    url = f"{NPM_REGISTRY_URL}/{package_name}"
+    if not package_name or not package_name.strip():
+        return None
+    url = f"{NPM_REGISTRY_URL}/{package_name.strip()}"
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()

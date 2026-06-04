@@ -388,6 +388,83 @@ CONFIRMED_MALICIOUS_PACKAGES = [
 CONFIRMED_MALICIOUS_PACKAGES = list(dict.fromkeys(CONFIRMED_MALICIOUS_PACKAGES))
 
 
+def fetch_hard_negatives(popular_packages, count=200):
+    """
+    Collect hard negatives: small but legitimate npm packages that are not in
+    the top-500 list. Uses two strategies:
+      1. Transitive deps (deps-of-deps) of popular packages — definitely legit
+         but low-profile enough to not be in the curated top list.
+      2. npm search API filtered for low-popularity, high-quality packages.
+    """
+    known = set(popular_packages)
+    seen = set()
+    hard_negatives = []
+
+    # ── Strategy 1: deps-of-deps (transitive) ──────────────────────────
+    print("[FETCH] Hard negatives — scanning transitive deps of top packages...")
+    first_level = set()
+    for pkg in popular_packages[:80]:
+        url = f"https://registry.npmjs.org/{pkg}/latest"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for dep in list(data.get("dependencies", {}).keys()):
+                    if dep not in known:
+                        first_level.add(dep)
+        except Exception:
+            pass
+        time.sleep(0.15)
+
+    # Now fetch deps of those first-level deps
+    for pkg in list(first_level)[:120]:
+        if len(hard_negatives) >= count:
+            break
+        url = f"https://registry.npmjs.org/{pkg}/latest"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for dep in list(data.get("dependencies", {}).keys()):
+                    if dep not in known and dep not in seen:
+                        hard_negatives.append(dep)
+                        seen.add(dep)
+                # Also add the first-level dep itself if not known
+                if pkg not in known and pkg not in seen:
+                    hard_negatives.append(pkg)
+                    seen.add(pkg)
+        except Exception:
+            pass
+        time.sleep(0.15)
+
+    # ── Strategy 2: npm search — low popularity, high quality ──────────
+    if len(hard_negatives) < count:
+        print(f"  -> {len(hard_negatives)} so far, querying npm search for more...")
+        search_queries = ["utility", "helper", "parser", "formatter", "validator"]
+        for query in search_queries:
+            if len(hard_negatives) >= count:
+                break
+            url = (
+                f"https://registry.npmjs.org/-/v1/search"
+                f"?text={query}+not:unstable&quality=0.6&popularity=0.1&size=50"
+            )
+            try:
+                resp = requests.get(url, timeout=15)
+                if resp.status_code == 200:
+                    objects = resp.json().get("objects", [])
+                    for obj in objects:
+                        name = obj.get("package", {}).get("name", "")
+                        if name and name not in known and name not in seen:
+                            hard_negatives.append(name)
+                            seen.add(name)
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+    print(f"  -> {len(hard_negatives)} hard negatives collected")
+    return hard_negatives[:count]
+
+
 def fetch_ghsa_malicious_npm(max_count=200):
     """Fetch confirmed malicious npm packages from the GitHub Advisory Database."""
     packages = []
@@ -552,13 +629,17 @@ def main():
             known.add(pkg)
     print(f"  -> {len(malicious)} total malicious packages after GHSA merge")
 
-    # ── Step 3: Generate typosquats ──
-    print(f"\n▸ Step 3: Generating 200 synthetic typosquats from top 50...")
+    # ── Step 3: Hard negatives ──
+    print(f"\n▸ Step 3: Collecting hard negatives (small legitimate deps)...")
+    hard_negatives = fetch_hard_negatives(healthy, count=200)
+
+    # ── Step 4: Generate typosquats (for inference testing only, NOT training) ──
+    print(f"\n▸ Step 4: Generating 200 synthetic typosquats (inference testing only)...")
     typosquats = generate_typosquats(healthy, count=200)
     print(f"  -> {len(typosquats)} synthetic typosquats generated")
 
-    # ── Step 4: Write files ──
-    print(f"\n▸ Step 4: Writing output files...")
+    # ── Step 5: Write files ──
+    print(f"\n▸ Step 5: Writing output files...")
 
     data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     os.makedirs(data_dir, exist_ok=True)
@@ -573,6 +654,18 @@ def main():
         for pkg in healthy:
             f.write(pkg + "\n")
     print(f"  ✓ {healthy_path}  ({len(healthy)} packages)")
+
+    # hard_negatives.txt — small legitimate deps (for training only)
+    hard_negatives_path = os.path.join(data_dir, "hard_negatives.txt")
+    with open(hard_negatives_path, "w", encoding="utf-8") as f:
+        f.write(f"# Hard negatives: small but legitimate npm packages\n")
+        f.write(f"# Source: direct dependencies of top-500 npm packages\n")
+        f.write(f"# Purpose: training only — teaches model that low popularity != suspicious\n")
+        f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"# Count: {len(hard_negatives)}\n\n")
+        for pkg in hard_negatives:
+            f.write(pkg + "\n")
+    print(f"  ✓ {hard_negatives_path}  ({len(hard_negatives)} packages)")
 
     # suspicious_packages.txt — malicious + typosquats
     suspicious = malicious + typosquats
@@ -601,11 +694,13 @@ def main():
     print("  SUMMARY")
     print("=" * 65)
     print(f"  Healthy packages:          {len(healthy)}")
+    print(f"  Hard negatives:            {len(hard_negatives)}")
     print(f"  Confirmed malicious:       {len(malicious)}")
-    print(f"  Synthetic typosquats:      {len(typosquats)}")
+    print(f"  Synthetic typosquats:      {len(typosquats)} (inference testing only)")
     print(f"  Total suspicious:          {len(suspicious)}")
     print(f"\n  Files written:")
     print(f"    data/healthy_packages.txt")
+    print(f"    data/hard_negatives.txt")
     print(f"    data/suspicious_packages.txt")
     print("=" * 65)
 

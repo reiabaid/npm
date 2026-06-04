@@ -104,7 +104,7 @@ async def rate_limit_middleware(request: Request, call_next):
     
     # Check rate limit
     if len(rate_limit_tracker[client_ip]) >= RATE_LIMIT_REQUESTS:
-        return HTTPException(status_code=429, detail="Rate limit exceeded: 10 requests per 60 seconds")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: 10 requests per 60 seconds")
     
     # Record this request
     rate_limit_tracker[client_ip].append(now)
@@ -316,10 +316,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
     )
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("src.api.main:app", host="0.0.0.0", port=8000, reload=True)
