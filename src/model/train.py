@@ -34,6 +34,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_auc_score,
 )
+from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import (
     GridSearchCV,
     StratifiedKFold,
@@ -184,11 +185,29 @@ print(f"    Best CV F1  : {grid.best_score_:.4f}")
 
 
 # ─────────────────────────────────────────────────────────────────────
+# 5b. Probability calibration (separate isotonic calibrator)
+#     Keeps the original tree model intact for SHAP compatibility.
+#     The calibrator maps raw predict_proba output → calibrated score.
+#     Calibrate on original dev set (not SMOTE'd) — real class distribution.
+# ─────────────────────────────────────────────────────────────────────
+print("\n[5b] Fitting isotonic calibrator on dev set …")
+raw_dev_proba = best_model.predict_proba(X_dev_t)[:, 1]
+calibrator = IsotonicRegression(out_of_bounds="clip")
+calibrator.fit(raw_dev_proba, y_dev)
+calibrator_path = os.path.join(MODELS_DIR, "scope_calibrator.joblib")
+joblib.dump(calibrator, calibrator_path)
+print(f"     Saved → models/scope_calibrator.joblib")
+print(f"     Raw score range on dev: [{raw_dev_proba.min():.3f}, {raw_dev_proba.max():.3f}]")
+cal_dev_proba = calibrator.transform(raw_dev_proba)
+print(f"     Calibrated range on dev: [{cal_dev_proba.min():.3f}, {cal_dev_proba.max():.3f}]")
+
+
+# ─────────────────────────────────────────────────────────────────────
 # 6. Threshold tuning — maximise recall with recall ≥ MIN_RECALL
 # ─────────────────────────────────────────────────────────────────────
 print(f"\n[6] Threshold tuning (target recall ≥ {MIN_RECALL}) …")
 
-y_dev_proba = best_model.predict_proba(X_dev_t)[:, 1]
+y_dev_proba = calibrator.transform(best_model.predict_proba(X_dev_t)[:, 1])
 precision_arr, recall_arr, thresholds = precision_recall_curve(y_dev, y_dev_proba)
 
 # Among thresholds where recall ≥ MIN_RECALL, pick the one with highest F1
@@ -217,7 +236,7 @@ print("\n" + "=" * 60)
 print("[7] FINAL TEST-SET EVALUATION")
 print("=" * 60)
 
-y_test_proba = best_model.predict_proba(X_test_t)[:, 1]
+y_test_proba = calibrator.transform(best_model.predict_proba(X_test_t)[:, 1])
 y_test_pred  = (y_test_proba >= best_thresh).astype(int)
 
 print(classification_report(y_test, y_test_pred, target_names=["Healthy", "Suspicious"]))
@@ -236,7 +255,7 @@ print(f"  TN={TN}  FP={FP}  FN={FN}  TP={TP}")
 
 report_path = os.path.join(REPORTS_DIR, "final_evaluation.txt")
 with open(report_path, "w") as fh:
-    fh.write(f"Model        : {best_name}\n")
+    fh.write(f"Model        : {best_name} (calibrated with isotonic regression)\n")
     fh.write(f"Best params  : {grid.best_params_}\n")
     fh.write(f"Threshold    : {best_thresh:.4f}\n")
     fh.write(f"ROC-AUC      : {auc:.4f}\n")

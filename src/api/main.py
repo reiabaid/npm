@@ -1,5 +1,8 @@
 """SCOPE FastAPI REST API — NPM Package Security Analysis Service."""
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -49,6 +52,7 @@ class AnalysisResult(BaseModel):
     explanations: List[ShapFactor] = []
     warnings: List[str] = []
     suggestion: Optional[Dict] = None
+    llm_verdict: Optional[str] = None
     error: Optional[str] = None
     status: Optional[str] = None
 
@@ -206,7 +210,12 @@ async def analyze_package(request: PackageRequest):
         # Convert to AnalysisResult format
         if "error" in result:
             if result.get("status") == "NOT_FOUND":
-                raise HTTPException(status_code=404, detail=f"Package '{package_name}' not found on npm")
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": f"Package '{package_name}' not found on npm",
+                             "suggestion": result.get("suggestion")},
+                )
             else:
                 raise HTTPException(status_code=503, detail=f"Error analyzing package: {result['error']}")
         
@@ -219,8 +228,9 @@ async def analyze_package(request: PackageRequest):
             "explanations": _shap_factors_to_model(result.get("explanations", [])),
             "warnings": result.get("warnings", []),
             "suggestion": result.get("suggestion"),
+            "llm_verdict": result.get("llm_verdict"),
         }
-        
+
         # Cache the successful result
         _cache_result(package_name, response_dict)
         
@@ -274,6 +284,7 @@ async def analyze_batch(request: BatchRequest):
                     "explanations": _shap_factors_to_model(result.get("explanations", [])),
                     "warnings": result.get("warnings", []),
                     "suggestion": result.get("suggestion"),
+                    "llm_verdict": result.get("llm_verdict"),
                 }
                 # Cache each result
                 _cache_result(result["package"], response_dict)

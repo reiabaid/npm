@@ -3,6 +3,8 @@ import argparse
 import json
 import sys
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import joblib
 import pandas as pd
 import numpy as np
@@ -19,6 +21,7 @@ from src.data.npm_fetcher import fetch_npm_raw, fetch_package_downloads, fetch_m
 from src.data.github_fetcher import fetch_github_stats
 from src.data.feature_engineer import engineer_features
 from src.model.explain import get_shap_explainer, explain_single_prediction
+from src.model.llm_review import get_llm_verdict
 from src.cli.output import format_result
 from src.cli.cache import ScopeCache
 from src.cli.config import ScopeConfig
@@ -80,6 +83,10 @@ class ScopeEngine:
             with open(threshold_path) as fh:
                 self.threshold = json.load(fh).get("threshold", DEFAULT_THRESHOLD)
 
+        # Load isotonic calibrator (optional — graceful fallback to raw proba)
+        calibrator_path = "models/scope_calibrator.joblib"
+        self.calibrator = joblib.load(calibrator_path) if os.path.exists(calibrator_path) else None
+
         self.feature_names = _FEATURE_NAMES
 
         try:
@@ -125,6 +132,12 @@ class ScopeEngine:
             if not npm_raw:
                 raise PackageNotFoundError(f"Package '{package_name}' not found on npm.")
 
+            # Extract install scripts early for LLM review later
+            _latest = npm_raw.get("dist-tags", {}).get("latest", "")
+            _all_scripts = npm_raw.get("versions", {}).get(_latest, {}).get("scripts", {})
+            install_scripts = {k: v for k, v in _all_scripts.items()
+                               if k in ("preinstall", "install", "postinstall")}
+
             # 2. Fetch GitHub metadata
             repo_field = npm_raw.get("repository")
             if not repo_field:
@@ -163,9 +176,12 @@ class ScopeEngine:
                 X_data = X_df[self.feature_names]
             X_transformed = self.preprocessor.transform(X_data)
 
-            # 6. Predict using tuned threshold
+            # 6. Predict — apply isotonic calibrator if available
             raw_score = float(self.model.predict_proba(X_transformed)[0, 1])
-            score = raw_score  # expose raw probability; threshold used for risk_level only
+            if self.calibrator is not None:
+                score = float(self.calibrator.transform([raw_score])[0])
+            else:
+                score = raw_score
 
             # 7. Explain
             if self.explainer is not None:
@@ -184,7 +200,15 @@ class ScopeEngine:
                 "warnings":     warnings,
             }
 
-            # 8. Typosquatting check (post-hoc suggestion)
+            # 8. LLM second-pass verdict (HIGH/CRITICAL only, skipped if no API key)
+            if result["risk_level"] in ("HIGH", "CRITICAL"):
+                verdict = get_llm_verdict(
+                    package_name, features, explanations, install_scripts
+                )
+                if verdict:
+                    result["llm_verdict"] = verdict
+
+            # 9. Typosquatting check (post-hoc suggestion)
             if not skip_suggestion and result["risk_level"] in ["HIGH", "CRITICAL"]:
                 suggestion = self.suggest_intended_package(package_name)
                 if suggestion:

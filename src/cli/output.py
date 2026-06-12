@@ -107,6 +107,13 @@ def format_result(result: dict) -> Panel:
     render_items.append(Text("\nTop Risk Contributors:", style="bold underline"))
     render_items.append(factors_table)
 
+    # 6. LLM verdict (only present for HIGH/CRITICAL when API key is set)
+    if result.get("llm_verdict"):
+        render_items.append(Text("\nAI Security Analysis:", style="bold underline magenta"))
+        verdict_text = Text()
+        verdict_text.append(f"  {result['llm_verdict']}\n", style="italic")
+        render_items.append(verdict_text)
+
     return Panel(
         Group(*render_items),
         title=f"[bold white]SCOPE Analysis[/bold white]",

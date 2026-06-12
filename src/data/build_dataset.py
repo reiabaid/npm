@@ -81,24 +81,27 @@ def process_package(pkg: str, label: int, popular_names: List[str]) -> dict | No
 
 def main():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    healthy_path         = os.path.join(base_dir, "data", "healthy_packages.txt")
-    hard_negatives_path  = os.path.join(base_dir, "data", "hard_negatives.txt")
-    suspicious_path      = os.path.join(base_dir, "data", "suspicious_packages.txt")
+    healthy_path              = os.path.join(base_dir, "data", "healthy_packages.txt")
+    hard_negatives_path       = os.path.join(base_dir, "data", "hard_negatives.txt")
+    challenging_negatives_path = os.path.join(base_dir, "data", "challenging_negatives.txt")
+    suspicious_path           = os.path.join(base_dir, "data", "suspicious_packages.txt")
     failed_log           = os.path.join(base_dir, "failed_packages.txt")
     output_path          = os.path.join(base_dir, "data", "processed", "dataset.csv")
 
-    healthy_pkgs    = load_packages(healthy_path)
-    hard_neg_pkgs   = load_packages(hard_negatives_path)
+    healthy_pkgs          = load_packages(healthy_path)
+    hard_neg_pkgs         = load_packages(hard_negatives_path)
+    challenging_neg_pkgs  = load_packages(challenging_negatives_path)
     # Only confirmed malicious — no synthetic typosquats in training data
-    malicious_pkgs  = load_confirmed_malicious(suspicious_path)
+    malicious_pkgs        = load_confirmed_malicious(suspicious_path)
 
     popular_names = list(healthy_pkgs)  # used for typosquat distance feature
 
-    # label=0: top-500 healthy + hard negatives (small but legitimate)
+    # label=0: top-500 + hard negatives (transitive deps) + challenging negatives
     # label=1: confirmed malicious packages only
     all_pkgs: List[Tuple[str, int]] = (
         [(p, 0) for p in healthy_pkgs]
         + [(p, 0) for p in hard_neg_pkgs]
+        + [(p, 0) for p in challenging_neg_pkgs]
         + [(p, 1) for p in malicious_pkgs]
     )
 
@@ -113,9 +116,10 @@ def main():
 
     processed_data = []
     print(f"Total packages to process: {len(all_pkgs)}")
-    print(f"  Healthy (top-500):   {sum(1 for _, l in all_pkgs if l == 0 and _ in set(healthy_pkgs))}")
-    print(f"  Hard negatives:      {sum(1 for p, l in all_pkgs if l == 0 and p in set(hard_neg_pkgs))}")
-    print(f"  Confirmed malicious: {sum(1 for _, l in all_pkgs if l == 1)}")
+    print(f"  Healthy (top-500):      {sum(1 for p, l in all_pkgs if l == 0 and p in set(healthy_pkgs))}")
+    print(f"  Hard negatives:         {sum(1 for p, l in all_pkgs if l == 0 and p in set(hard_neg_pkgs))}")
+    print(f"  Challenging negatives:  {sum(1 for p, l in all_pkgs if l == 0 and p in set(challenging_neg_pkgs))}")
+    print(f"  Confirmed malicious:    {sum(1 for _, l in all_pkgs if l == 1)}")
 
     for i, (pkg, label) in enumerate(all_pkgs):
         print(f"[{i+1}/{len(all_pkgs)}] Processing {pkg} (label={label})...")

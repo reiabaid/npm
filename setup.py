@@ -23,6 +23,7 @@ setup(
         "uvicorn>=0.24.0",
         "rich>=13.0.0",
         "joblib>=1.3.0",
+        "openai>=1.30.0",
     ],
     extras_require={
         "dev": [

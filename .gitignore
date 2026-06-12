@@ -33,16 +33,23 @@ env/
 .DS_Store
 Thumbs.db
 
-# Model artifacts
+# Model artifacts (reproducible by retraining — don't commit binaries)
 *.pkl
 *.h5
 *.pt
 *.onnx
+models/*.joblib
+models/*.json
+
+# Build / train logs
+build_log.txt
+train_log.txt
 
 # Data (keep structure, ignore large/generated files)
 data/raw/*
 data/processed/*
 data/hard_negatives.txt
+data/challenging_negatives.txt
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 

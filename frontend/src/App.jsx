@@ -471,6 +471,17 @@ export default function App() {
               )}
             </article>
 
+            {result.llm_verdict && (
+              <article className="glass card verdict-card">
+                <div className="verdict-header">
+                  <h2>AI Security Analysis</h2>
+                  <span className="verdict-badge">Claude</span>
+                </div>
+                <p className="verdict-text">{result.llm_verdict}</p>
+                <p className="muted verdict-note">Generated for HIGH / CRITICAL packages only</p>
+              </article>
+            )}
+
             <article className="glass card chart-card">
               <h2>Top Risk Factors</h2>
               <p className="muted">These are the strongest model factors for this prediction.</p>

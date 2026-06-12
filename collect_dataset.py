@@ -390,17 +390,13 @@ CONFIRMED_MALICIOUS_PACKAGES = list(dict.fromkeys(CONFIRMED_MALICIOUS_PACKAGES))
 
 def fetch_hard_negatives(popular_packages, count=200):
     """
-    Collect hard negatives: small but legitimate npm packages that are not in
-    the top-500 list. Uses two strategies:
-      1. Transitive deps (deps-of-deps) of popular packages — definitely legit
-         but low-profile enough to not be in the curated top list.
-      2. npm search API filtered for low-popularity, high-quality packages.
+    Collect hard negatives: transitive deps of popular packages — definitely
+    legitimate but low-profile. These cover the "internal utility" space.
     """
     known = set(popular_packages)
     seen = set()
     hard_negatives = []
 
-    # ── Strategy 1: deps-of-deps (transitive) ──────────────────────────
     print("[FETCH] Hard negatives — scanning transitive deps of top packages...")
     first_level = set()
     for pkg in popular_packages[:80]:
@@ -416,7 +412,6 @@ def fetch_hard_negatives(popular_packages, count=200):
             pass
         time.sleep(0.15)
 
-    # Now fetch deps of those first-level deps
     for pkg in list(first_level)[:120]:
         if len(hard_negatives) >= count:
             break
@@ -429,7 +424,6 @@ def fetch_hard_negatives(popular_packages, count=200):
                     if dep not in known and dep not in seen:
                         hard_negatives.append(dep)
                         seen.add(dep)
-                # Also add the first-level dep itself if not known
                 if pkg not in known and pkg not in seen:
                     hard_negatives.append(pkg)
                     seen.add(pkg)
@@ -437,32 +431,79 @@ def fetch_hard_negatives(popular_packages, count=200):
             pass
         time.sleep(0.15)
 
-    # ── Strategy 2: npm search — low popularity, high quality ──────────
-    if len(hard_negatives) < count:
-        print(f"  -> {len(hard_negatives)} so far, querying npm search for more...")
-        search_queries = ["utility", "helper", "parser", "formatter", "validator"]
-        for query in search_queries:
-            if len(hard_negatives) >= count:
-                break
-            url = (
-                f"https://registry.npmjs.org/-/v1/search"
-                f"?text={query}+not:unstable&quality=0.6&popularity=0.1&size=50"
-            )
-            try:
-                resp = requests.get(url, timeout=15)
-                if resp.status_code == 200:
-                    objects = resp.json().get("objects", [])
-                    for obj in objects:
-                        name = obj.get("package", {}).get("name", "")
-                        if name and name not in known and name not in seen:
-                            hard_negatives.append(name)
-                            seen.add(name)
-            except Exception:
-                pass
-            time.sleep(0.5)
-
-    print(f"  -> {len(hard_negatives)} hard negatives collected")
+    print(f"  -> {len(hard_negatives)} hard negatives (transitive deps) collected")
     return hard_negatives[:count]
+
+
+def fetch_challenging_negatives(popular_packages, count=400):
+    """
+    Fetch 'challenging' negatives: small but legitimate packages that look
+    suspicious by surface metrics (low downloads, few versions, new maintainers)
+    but are actually maintained, high-quality packages.
+
+    This is the critical missing middle in training data. Without these, the
+    model learns 'low downloads = malicious' rather than the true signal.
+
+    Strategy: npm search with high quality + maintenance scores but low
+    popularity, across many domains. High quality/maintenance scores indicate
+    the package is properly maintained and not a throwaway attack package.
+    """
+    known_malicious = set(CONFIRMED_MALICIOUS_PACKAGES)
+    exclude = set(popular_packages) | known_malicious
+    seen = set()
+    packages = []
+
+    # Broad domain coverage — forces model to learn signals beyond package name
+    queries = [
+        # Frameworks / plugins
+        "react hook", "vue component", "svelte store", "angular service",
+        "express middleware", "fastify plugin", "koa middleware",
+        # Build tools
+        "rollup plugin", "vite plugin", "webpack plugin", "babel plugin",
+        "esbuild plugin", "postcss plugin",
+        # Language utilities
+        "typescript types", "type guard", "schema validation", "zod schema",
+        # Data / parsing
+        "json parser", "csv parser", "yaml parser", "xml parser",
+        "markdown renderer", "html sanitizer", "url parser",
+        # Node.js utilities
+        "file system util", "path utility", "stream helper",
+        "buffer utility", "crypto helper", "hash utility",
+        # Testing
+        "test fixture", "mock helper", "assertion library", "snapshot test",
+        # CLI
+        "cli prompt", "terminal color", "progress bar", "spinner",
+        # Network
+        "http retry", "fetch wrapper", "axios interceptor", "websocket client",
+        # Date / number
+        "date format", "number format", "currency format", "duration parse",
+        # Misc domains
+        "image resize", "pdf parse", "email validate", "phone format",
+        "uuid generate", "slug generate", "debounce throttle",
+    ]
+
+    for query in queries:
+        if len(packages) >= count:
+            break
+        url = (
+            f"https://registry.npmjs.org/-/v1/search"
+            f"?text={query.replace(' ', '+')}"
+            f"&quality=0.65&maintenance=0.6&popularity=0.05&size=50"
+        )
+        try:
+            resp = requests.get(url, timeout=15)
+            if resp.status_code == 200:
+                for obj in resp.json().get("objects", []):
+                    name = obj.get("package", {}).get("name", "")
+                    if name and name not in exclude and name not in seen:
+                        packages.append(name)
+                        seen.add(name)
+        except Exception:
+            pass
+        time.sleep(0.4)
+
+    print(f"  -> {len(packages)} challenging negatives (small legitimate packages) collected")
+    return packages[:count]
 
 
 def fetch_ghsa_malicious_npm(max_count=200):
@@ -629,9 +670,13 @@ def main():
             known.add(pkg)
     print(f"  -> {len(malicious)} total malicious packages after GHSA merge")
 
-    # ── Step 3: Hard negatives ──
-    print(f"\n▸ Step 3: Collecting hard negatives (small legitimate deps)...")
+    # ── Step 3: Hard negatives (transitive deps) ──
+    print(f"\n▸ Step 3: Collecting hard negatives (transitive deps)...")
     hard_negatives = fetch_hard_negatives(healthy, count=200)
+
+    # ── Step 3b: Challenging negatives (small legitimate packages) ──
+    print(f"\n▸ Step 3b: Collecting challenging negatives (small-but-legitimate packages)...")
+    challenging_negatives = fetch_challenging_negatives(healthy, count=400)
 
     # ── Step 4: Generate typosquats (for inference testing only, NOT training) ──
     print(f"\n▸ Step 4: Generating 200 synthetic typosquats (inference testing only)...")
@@ -655,17 +700,28 @@ def main():
             f.write(pkg + "\n")
     print(f"  ✓ {healthy_path}  ({len(healthy)} packages)")
 
-    # hard_negatives.txt — small legitimate deps (for training only)
+    # hard_negatives.txt — transitive deps (for training only)
     hard_negatives_path = os.path.join(data_dir, "hard_negatives.txt")
     with open(hard_negatives_path, "w", encoding="utf-8") as f:
-        f.write(f"# Hard negatives: small but legitimate npm packages\n")
-        f.write(f"# Source: direct dependencies of top-500 npm packages\n")
-        f.write(f"# Purpose: training only — teaches model that low popularity != suspicious\n")
+        f.write(f"# Hard negatives: transitive deps of top-500 npm packages\n")
+        f.write(f"# Purpose: training only\n")
         f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"# Count: {len(hard_negatives)}\n\n")
         for pkg in hard_negatives:
             f.write(pkg + "\n")
     print(f"  ✓ {hard_negatives_path}  ({len(hard_negatives)} packages)")
+
+    # challenging_negatives.txt — small legitimate packages (the missing middle)
+    challenging_negatives_path = os.path.join(data_dir, "challenging_negatives.txt")
+    with open(challenging_negatives_path, "w", encoding="utf-8") as f:
+        f.write(f"# Challenging negatives: small but legitimate npm packages\n")
+        f.write(f"# Source: npm search — high quality/maintenance, low popularity\n")
+        f.write(f"# Purpose: forces model to learn real signals beyond download count\n")
+        f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"# Count: {len(challenging_negatives)}\n\n")
+        for pkg in challenging_negatives:
+            f.write(pkg + "\n")
+    print(f"  ✓ {challenging_negatives_path}  ({len(challenging_negatives)} packages)")
 
     # suspicious_packages.txt — malicious + typosquats
     suspicious = malicious + typosquats
@@ -694,13 +750,15 @@ def main():
     print("  SUMMARY")
     print("=" * 65)
     print(f"  Healthy packages:          {len(healthy)}")
-    print(f"  Hard negatives:            {len(hard_negatives)}")
+    print(f"  Hard negatives (deps):     {len(hard_negatives)}")
+    print(f"  Challenging negatives:     {len(challenging_negatives)}")
     print(f"  Confirmed malicious:       {len(malicious)}")
     print(f"  Synthetic typosquats:      {len(typosquats)} (inference testing only)")
     print(f"  Total suspicious:          {len(suspicious)}")
     print(f"\n  Files written:")
     print(f"    data/healthy_packages.txt")
     print(f"    data/hard_negatives.txt")
+    print(f"    data/challenging_negatives.txt")
     print(f"    data/suspicious_packages.txt")
     print("=" * 65)
 
