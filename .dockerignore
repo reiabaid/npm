@@ -1,0 +1,16 @@
+frontend/
+node_modules/
+data/raw/
+data/processed/
+data/challenging_negatives.txt
+data/hard_negatives.txt
+reports/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log
+.git/
+.github/
+tests/
