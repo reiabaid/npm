@@ -1,4 +1,4 @@
-name: SCOPE Scan
+name: SCOPE Dependency Scan
 
 on:
   pull_request:
@@ -6,9 +6,14 @@ on:
       - "package.json"
       - "package-lock.json"
 
+permissions:
+  pull-requests: write
+  contents: read
+
 jobs:
   scope-scan:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -17,10 +22,28 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install SCOPE
+      - name: Install dependencies
         run: pip install -r requirements.txt && pip install -e .
 
-      - name: Run SCOPE batch scan
-        run: scope batch package.json --json --fail-on-high
+      - name: Run SCOPE scan
+        id: scan
+        run: python -m src.ci.scan_pr
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body-file scan_comment.md \
+            --edit-last 2>/dev/null || \
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body-file scan_comment.md
+
+      - name: Fail on HIGH or CRITICAL packages
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "One or more HIGH/CRITICAL packages detected. Review the PR comment for details."
+          exit 1

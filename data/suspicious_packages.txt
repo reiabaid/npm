@@ -204,6 +204,30 @@ ethers-jss
 coinbase-wallet-utils
 csc154-internall-depend
 
+# ── Supply Chain Attacks (established packages compromised post-publish) ──
+# These have real GitHub repos, old maintainer accounts, and high download history.
+# Including them forces the model to learn signals beyond "new throwaway account".
+event-stream
+ua-parser-js
+node-ipc
+colors
+eslint-scope
+coa
+rc
+jquery.js
+bootstrap.js
+react-native.js
+is-buffer2
+electron-native-notify
+@bb-builder/core
+loadyaml
+dotenv.js
+fetch-robots
+http-fetch-cookies
+fastify.js
+chalk.js
+styled-components.js
+
 # ── Synthetic Typosquats (generated from top 50) ──
 esmver
 ddebug

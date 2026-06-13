@@ -33,13 +33,11 @@ env/
 .DS_Store
 Thumbs.db
 
-# Model artifacts (reproducible by retraining — don't commit binaries)
+# Model artifacts (large binary formats — not joblib/json which are committed)
 *.pkl
 *.h5
 *.pt
 *.onnx
-models/*.joblib
-models/*.json
 
 # Build / train logs
 build_log.txt

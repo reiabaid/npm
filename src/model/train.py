@@ -115,15 +115,19 @@ joblib.dump(preprocessor, os.path.join(MODELS_DIR, "scope_preprocessor.joblib"))
 print("    Saved â†’ models/scope_preprocessor.joblib")
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# 3. SMOTE on dev set
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-print("\n[3] Applying SMOTE â€¦")
+# ─────────────────────────────────────────────────────────────────────
+# 3. Split dev into model-train (80%) / cal (20%), then SMOTE train
+#    Cal split is held out from SMOTE so calibrator sees out-of-sample
+#    predictions — prevents isotonic regression from memorising train proba.
+# ─────────────────────────────────────────────────────────────────────
+print("\n[3] Splitting dev -> train (80%) / cal (20%), then SMOTE...")
+X_train_t, X_cal_t, y_train, y_cal = train_test_split(
+    X_dev_t, y_dev, test_size=0.20, stratify=y_dev, random_state=42
+)
 sm = SMOTE(random_state=42)
-X_res, y_res = sm.fit_resample(X_dev_t, y_dev)
+X_res, y_res = sm.fit_resample(X_train_t, y_train)
 counts = pd.Series(y_res).value_counts().sort_index()
-print(f"    After SMOTE â†’ class 0: {counts[0]}  class 1: {counts[1]}")
-
+print(f"    Train {len(X_train_t)} / Cal {len(X_cal_t)} | After SMOTE -> class 0: {counts[0]}  class 1: {counts[1]}")
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # 4. 5-fold CV to pick the best model family
@@ -190,16 +194,16 @@ print(f"    Best CV F1  : {grid.best_score_:.4f}")
 #     The calibrator maps raw predict_proba output â†’ calibrated score.
 #     Calibrate on original dev set (not SMOTE'd) â€” real class distribution.
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-print("\n[5b] Fitting isotonic calibrator on dev set â€¦")
-raw_dev_proba = best_model.predict_proba(X_dev_t)[:, 1]
+print("\n[5b] Fitting isotonic calibrator on held-out cal set...")
+raw_cal_proba = best_model.predict_proba(X_cal_t)[:, 1]
 calibrator = IsotonicRegression(out_of_bounds="clip")
-calibrator.fit(raw_dev_proba, y_dev)
+calibrator.fit(raw_cal_proba, y_cal)
 calibrator_path = os.path.join(MODELS_DIR, "scope_calibrator.joblib")
 joblib.dump(calibrator, calibrator_path)
 print(f"     Saved â†’ models/scope_calibrator.joblib")
-print(f"     Raw score range on dev: [{raw_dev_proba.min():.3f}, {raw_dev_proba.max():.3f}]")
-cal_dev_proba = calibrator.transform(raw_dev_proba)
-print(f"     Calibrated range on dev: [{cal_dev_proba.min():.3f}, {cal_dev_proba.max():.3f}]")
+print(f"     Raw score range on cal: [{raw_cal_proba.min():.3f}, {raw_cal_proba.max():.3f}]")
+cal_cal_proba = calibrator.transform(raw_cal_proba)
+print(f"     Calibrated range on cal: [{cal_cal_proba.min():.3f}, {cal_cal_proba.max():.3f}]")
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -207,8 +211,8 @@ print(f"     Calibrated range on dev: [{cal_dev_proba.min():.3f}, {cal_dev_proba
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 print(f"\n[6] Threshold tuning (target recall â‰¥ {MIN_RECALL}) â€¦")
 
-y_dev_proba = calibrator.transform(best_model.predict_proba(X_dev_t)[:, 1])
-precision_arr, recall_arr, thresholds = precision_recall_curve(y_dev, y_dev_proba)
+y_cal_proba = calibrator.transform(best_model.predict_proba(X_cal_t)[:, 1])
+precision_arr, recall_arr, thresholds = precision_recall_curve(y_cal, y_cal_proba)
 
 # Among thresholds where recall â‰¥ MIN_RECALL, pick the one with highest F1
 best_thresh = 0.5
