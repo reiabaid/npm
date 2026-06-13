@@ -211,7 +211,134 @@ function RecentDialog({ open, onClose, recentAnalyses, onSelectRecent }) {
   );
 }
 
+function getRiskBadgeClass(riskLevel = "") {
+  const r = riskLevel.toUpperCase();
+  if (r === "HEALTHY") return "badge-healthy";
+  if (r === "MEDIUM")  return "badge-medium";
+  if (r === "HIGH")    return "badge-high";
+  if (r === "CRITICAL") return "badge-critical";
+  return "badge-unknown";
+}
+
+function DashboardView() {
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [depCount, setDepCount] = useState(0);
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+
+  async function handleScan() {
+    setError("");
+    setRows(null);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(input);
+    } catch {
+      setError("Invalid JSON — paste the full contents of a package.json file.");
+      return;
+    }
+
+    const pkgCount = Object.keys({
+      ...(parsed.dependencies || {}),
+      ...(parsed.devDependencies || {}),
+    }).length;
+    setDepCount(pkgCount);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/dashboard/scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ package_json: parsed }),
+      });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      setRows(await res.json());
+    } catch (err) {
+      setError(err.message || "Scan failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="dashboard-view">
+      <div className="glass card reveal">
+        <h2>Dependency Vulnerability Scan</h2>
+        <p className="muted">Paste your <span className="mono">package.json</span> below to scan all dependencies for known CVEs and ML risk scores.</p>
+        <textarea
+          className="dash-textarea"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={'{\n  "dependencies": {\n    "lodash": "^4.17.20"\n  }\n}'}
+          rows={10}
+          spellCheck={false}
+        />
+        <button className="search-button" onClick={handleScan} disabled={loading || !input.trim()}>
+          {loading ? `Scanning ${depCount} package${depCount !== 1 ? "s" : ""}…` : "Scan Project"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="glass card error-card reveal">
+          <p>{error}</p>
+        </div>
+      )}
+
+      {rows && (
+        <div className="glass card reveal">
+          <h2>Results <span className="muted">— {rows.length} package{rows.length !== 1 ? "s" : ""}</span></h2>
+          <div className="dash-table-wrap">
+            <table className="dash-table">
+              <thead>
+                <tr>
+                  <th>Package</th>
+                  <th>Version</th>
+                  <th>Risk</th>
+                  <th>Score</th>
+                  <th>CVEs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.package}>
+                    <td className="mono">{row.package}</td>
+                    <td className="mono muted">{row.version || "—"}</td>
+                    <td>
+                      <span className={`risk-badge ${getRiskBadgeClass(row.risk_level)}`}>
+                        {row.risk_level || "UNKNOWN"}
+                      </span>
+                    </td>
+                    <td className="mono">{row.score != null ? `${(row.score * 100).toFixed(1)}%` : "—"}</td>
+                    <td>
+                      {row.cves.length === 0 ? (
+                        <span className="muted">none</span>
+                      ) : (
+                        <details className="cve-details">
+                          <summary className="cve-count">{row.cves.length} CVE{row.cves.length !== 1 ? "s" : ""}</summary>
+                          <ul className="cve-list">
+                            {row.cves.map((cve) => (
+                              <li key={cve.id}>
+                                <span className="mono cve-id">{cve.id}</span>
+                                {cve.summary && <span className="cve-summary"> — {cve.summary}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
+  const [activeTab, setActiveTab] = useState("scan");
   const [packageName, setPackageName] = useState("react-domm");
   const [loading, setLoading] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
@@ -363,15 +490,26 @@ export default function App() {
       <main className="shell">
         <header className="hero reveal">
           <div className="top-actions">
+            <div className="tab-switcher">
+              <button type="button" className={`tab-btn ${activeTab === "scan" ? "tab-active" : ""}`} onClick={() => setActiveTab("scan")}>
+                Package Scan
+              </button>
+              <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "tab-active" : ""}`} onClick={() => setActiveTab("dashboard")}>
+                Dashboard
+              </button>
+            </div>
             <button type="button" className="secondary-button" onClick={() => setRecentOpen(true)}>
-              Recent Analyses ({recentAnalyses.length})
+              Recent ({recentAnalyses.length})
             </button>
           </div>
           <p className="kicker">SCOPE Intelligence</p>
-          <h1>Package Trust Analysis</h1>
+          <h1>{activeTab === "dashboard" ? "Dependency Vulnerability Dashboard" : "Package Trust Analysis"}</h1>
           <p className="subtitle">Minimal, explainable security insight for NPM dependencies.</p>
         </header>
 
+        {activeTab === "dashboard" && <DashboardView />}
+
+        {activeTab === "scan" && <>
         <section className="glass card search-card reveal reveal-delay-1">
           <form onSubmit={onSubmit} className="search-form">
             <label htmlFor="package-input" className="label">
@@ -489,6 +627,7 @@ export default function App() {
             </article>
           </section>
         )}
+        </>}
       </main>
 
       <RecentDialog

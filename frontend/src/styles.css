@@ -723,3 +723,102 @@ h2 {
     width: 100%;
   }
 }
+
+/* ── Tab switcher ─────────────────────────────────────────── */
+.tab-switcher {
+  display: flex;
+  gap: 0.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 0.2rem;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.35rem 0.9rem;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-btn:hover { color: var(--text-primary); }
+
+.tab-active {
+  background: var(--glass-strong);
+  color: var(--text-primary);
+}
+
+/* ── Dashboard view ───────────────────────────────────────── */
+.dashboard-view { display: flex; flex-direction: column; gap: 1.2rem; }
+
+.dash-textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin: 0.8rem 0;
+  padding: 0.8rem 1rem;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.dash-textarea:focus { outline: none; border-color: var(--accent); }
+
+.dash-table-wrap { overflow-x: auto; margin-top: 1rem; }
+
+.dash-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.dash-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.dash-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: top;
+}
+
+.dash-table tr:last-child td { border-bottom: none; }
+
+/* Risk badges */
+.risk-badge {
+  display: inline-block;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.18rem 0.5rem;
+  text-transform: uppercase;
+}
+
+.badge-healthy  { background: rgba(127,169,139,0.18); color: var(--success); }
+.badge-medium   { background: rgba(184,154,102,0.18); color: var(--warning); }
+.badge-high     { background: rgba(181,122,122,0.22); color: var(--danger); }
+.badge-critical { background: rgba(181,122,122,0.35); color: #e08080; }
+.badge-unknown  { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+/* CVE expandable */
+.cve-details { cursor: pointer; }
+.cve-count { color: var(--danger); font-weight: 600; font-size: 0.82rem; }
+.cve-list { margin: 0.4rem 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 0.3rem; }
+.cve-id { color: var(--accent); }
+.cve-summary { color: var(--text-secondary); font-size: 0.8rem; }

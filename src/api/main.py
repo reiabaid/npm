@@ -345,22 +345,26 @@ async def dashboard_scan(req: DashboardRequest):
     if not engine:
         raise HTTPException(status_code=503, detail="SCOPE engine not initialized")
 
+    _engine = engine  # narrow type: guaranteed non-None past this point
+
     deps = {}
     deps.update(req.package_json.get("dependencies", {}))
     deps.update(req.package_json.get("devDependencies", {}))
 
-    results = []
-    for name, version_str in deps.items():
+    async def scan_one(name: str, version_str: str):
         version = version_str.lstrip("^~>=<")
-        ml = await asyncio.to_thread(engine.analyze, name)
-        vulns = await asyncio.to_thread(query_osv, name, version)
-        results.append({
+        ml, vulns = await asyncio.gather(
+            asyncio.to_thread(_engine.analyze, name),
+            asyncio.to_thread(query_osv, name, version),
+        )
+        return {
             "package":    name,
             "version":    version,
             "risk_level": ml.get("risk_level", "UNKNOWN"),
             "score":      ml.get("score"),
             "cves":       [{"id": v["id"], "summary": v.get("summary", "")} for v in vulns],
-        })
+        }
 
+    results = list(await asyncio.gather(*[scan_one(n, v) for n, v in deps.items()]))
     results.sort(key=lambda x: (len(x["cves"]), x.get("score") or 0), reverse=True)
     return results
