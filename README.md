@@ -1,3 +1,13 @@
+---
+title: SCOPE
+emoji: 🔍
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # SCOPE - Security Check for Open-source Package Ecosystems
 
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
