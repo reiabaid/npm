@@ -1,6 +1,8 @@
 """SCOPE FastAPI REST API — NPM Package Security Analysis Service."""
 
 from dotenv import load_dotenv
+
+from src.data.osv_fetcher import query_osv
 load_dotenv()
 
 import asyncio
@@ -329,3 +331,36 @@ if __name__ == "__main__":
         reload=True,
         log_level="info",
     )
+
+
+# ===========================================================================
+# Backend Endpoints
+# ===========================================================================
+
+class DashboardRequest(BaseModel):
+    package_json: dict
+
+@app.post("/dashboard/scan")
+async def dashboard_scan(req: DashboardRequest):
+    if not engine:
+        raise HTTPException(status_code=503, detail="SCOPE engine not initialized")
+
+    deps = {}
+    deps.update(req.package_json.get("dependencies", {}))
+    deps.update(req.package_json.get("devDependencies", {}))
+
+    results = []
+    for name, version_str in deps.items():
+        version = version_str.lstrip("^~>=<")
+        ml = await asyncio.to_thread(engine.analyze, name)
+        vulns = await asyncio.to_thread(query_osv, name, version)
+        results.append({
+            "package":    name,
+            "version":    version,
+            "risk_level": ml.get("risk_level", "UNKNOWN"),
+            "score":      ml.get("score"),
+            "cves":       [{"id": v["id"], "summary": v.get("summary", "")} for v in vulns],
+        })
+
+    results.sort(key=lambda x: (len(x["cves"]), x.get("score") or 0), reverse=True)
+    return results

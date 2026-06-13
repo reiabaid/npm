@@ -119,6 +119,16 @@ def save_raw_json(data: dict, package_name: str,
     return filepath
 
 
+def load_raw_json(package_name: str, output_dir: str = "data/raw") -> Optional[dict]:
+    """Load previously saved raw JSON from disk, or return None if not cached."""
+    safe_name = package_name.replace("/", "_").replace("@", "")
+    filepath = os.path.join(output_dir, f"{safe_name}.json")
+    if not os.path.exists(filepath):
+        return None
+    with open(filepath, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def fetch_and_save(package_name: str) -> Optional[dict]:
     """Fetch raw JSON, save it, and return parsed metadata."""
     raw = fetch_npm_raw(package_name)

@@ -73,12 +73,16 @@ def explain_single_prediction(explainer, X_scaled, feature_names):
     """
     shap_values = explainer.shap_values(X_scaled)
     
-    # shap_values[1] is for the 'suspicious' class (class 1)
+    # Extract class-1 (suspicious) SHAP values for the first sample.
+    # Newer SHAP returns (n_samples, n_features, n_classes); older returns a list.
     if isinstance(shap_values, list):
-        sample_shap = shap_values[1][0]
+        sample_shap = shap_values[1][0]          # old: list[class][sample]
+    elif shap_values.ndim == 3:
+        sample_shap = shap_values[0, :, 1]       # new: (samples, features, classes)
+    elif shap_values.ndim == 2:
+        sample_shap = shap_values[0]             # (samples, features)
     else:
-        # For some models, it returns a single array for binary class
-        sample_shap = shap_values[0] if len(shap_values.shape) > 1 else shap_values
+        sample_shap = shap_values
 
     results = []
     for name, val in zip(feature_names, sample_shap):

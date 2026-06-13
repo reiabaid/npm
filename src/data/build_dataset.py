@@ -8,6 +8,7 @@ from src.data.npm_fetcher import (
     fetch_package_downloads,
     fetch_maintainer_age,
     save_raw_json,
+    load_raw_json,
 )
 from src.data.github_fetcher import fetch_github_stats
 from src.data.feature_engineer import engineer_features
@@ -50,7 +51,7 @@ def load_confirmed_malicious(filepath: str) -> List[str]:
 
 def process_package(pkg: str, label: int, popular_names: List[str]) -> dict | None:
     """Fetch all data for one package and return a feature dict, or None on failure."""
-    npm_raw = fetch_npm_raw(pkg)
+    npm_raw = load_raw_json(pkg) or fetch_npm_raw(pkg)
     if npm_raw is None:
         raise ValueError(f"npm fetch returned None for '{pkg}'")
 
