@@ -1,8 +1,6 @@
 """SCOPE FastAPI REST API — NPM Package Security Analysis Service."""
 
 from dotenv import load_dotenv
-
-from src.data.osv_fetcher import query_osv
 load_dotenv()
 
 import asyncio
@@ -16,6 +14,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 
 from src.cli.sentinel import ScopeEngine
+from src.data.osv_fetcher import query_osv
 
 # ============================================================================
 # Global State
@@ -62,6 +61,10 @@ class BatchRequest(BaseModel):
     """Request model for batch analysis."""
     packages: List[str] = Field(..., min_length=1, max_length=BATCH_MAX_SIZE, description="List of package names (max 20)")
 
+class DashboardRequest(BaseModel):
+    """Request model for dependency dashboard scan."""
+    package_json: dict
+
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str
@@ -100,21 +103,18 @@ async def rate_limit_middleware(request: Request, call_next):
     """Rate limiting middleware: 10 requests per 60 seconds per IP."""
     client_ip = request.client.host if request.client else "unknown"
     now = datetime.now()
-    
-    # Clean up old requests outside the window
+
     if client_ip in rate_limit_tracker:
         rate_limit_tracker[client_ip] = [
             req_time for req_time in rate_limit_tracker[client_ip]
             if (now - req_time).total_seconds() < RATE_LIMIT_WINDOW
         ]
-    
-    # Check rate limit
+
     if len(rate_limit_tracker[client_ip]) >= RATE_LIMIT_REQUESTS:
         raise HTTPException(status_code=429, detail="Rate limit exceeded: 10 requests per 60 seconds")
-    
-    # Record this request
+
     rate_limit_tracker[client_ip].append(now)
-    
+
     response = await call_next(request)
     response.headers["X-RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
     response.headers["X-RateLimit-Remaining"] = str(RATE_LIMIT_REQUESTS - len(rate_limit_tracker[client_ip]))
@@ -152,7 +152,6 @@ def _get_cached_result(package_name: str) -> Optional[Dict]:
         if package_name in cache_expiry:
             if datetime.now() < cache_expiry[package_name]:
                 return response_cache[package_name]
-        # Remove expired cache
         response_cache.pop(package_name, None)
         cache_expiry.pop(package_name, None)
     return None
@@ -170,7 +169,7 @@ def _shap_factors_to_model(explanations: List[Dict]) -> List[ShapFactor]:
             shap_value=exp.get("shap_value", 0.0),
             description=None
         )
-        for exp in explanations[:4]  # Top 4 factors
+        for exp in explanations[:4]
     ]
 
 # ============================================================================
@@ -190,26 +189,23 @@ async def get_health():
 async def analyze_package(request: PackageRequest):
     """
     Analyze a single NPM package for security risks.
-    
+
     - **package_name**: Name of the NPM package to analyze (e.g., 'express', 'lodash')
-    
+
     Returns risk score, level, and SHAP-based feature explanations.
     """
     if not engine:
         raise HTTPException(status_code=503, detail="SCOPE engine not initialized")
-    
+
     package_name = request.package_name.strip()
-    
-    # Check cache first
+
     cached = _get_cached_result(package_name)
     if cached:
         return AnalysisResult(**cached)
-    
-    # Run analysis in thread pool to avoid blocking event loop
+
     try:
         result = await asyncio.to_thread(engine.analyze, package_name)
-        
-        # Convert to AnalysisResult format
+
         if "error" in result:
             if result.get("status") == "NOT_FOUND":
                 from fastapi.responses import JSONResponse
@@ -220,8 +216,7 @@ async def analyze_package(request: PackageRequest):
                 )
             else:
                 raise HTTPException(status_code=503, detail=f"Error analyzing package: {result['error']}")
-        
-        # Format response
+
         response_dict = {
             "package": result["package"],
             "score": result["score"],
@@ -233,11 +228,9 @@ async def analyze_package(request: PackageRequest):
             "llm_verdict": result.get("llm_verdict"),
         }
 
-        # Cache the successful result
         _cache_result(package_name, response_dict)
-        
         return AnalysisResult(**response_dict)
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -247,18 +240,17 @@ async def analyze_package(request: PackageRequest):
 async def analyze_batch(request: BatchRequest):
     """
     Analyze multiple NPM packages in a batch.
-    
+
     - **packages**: List of package names (max 20)
-    
+
     Returns list of analysis results.
     """
     if not engine:
         raise HTTPException(status_code=503, detail="SCOPE engine not initialized")
-    
+
     if len(request.packages) > BATCH_MAX_SIZE:
         raise HTTPException(status_code=422, detail=f"Too many packages. Maximum is {BATCH_MAX_SIZE}")
-    
-    # Remove duplicates while preserving order
+
     unique_packages = []
     seen = set()
     for pkg in request.packages:
@@ -266,15 +258,13 @@ async def analyze_batch(request: BatchRequest):
         if pkg_clean and pkg_clean not in seen:
             unique_packages.append(pkg_clean)
             seen.add(pkg_clean)
-    
+
     if not unique_packages:
         raise HTTPException(status_code=422, detail="No valid packages provided")
-    
-    # Run batch analysis in thread pool
+
     try:
         results = await asyncio.to_thread(engine.analyze_many, unique_packages)
-        
-        # Format results
+
         analysis_results = []
         for result in results:
             if "error" not in result:
@@ -288,7 +278,6 @@ async def analyze_batch(request: BatchRequest):
                     "suggestion": result.get("suggestion"),
                     "llm_verdict": result.get("llm_verdict"),
                 }
-                # Cache each result
                 _cache_result(result["package"], response_dict)
             else:
                 response_dict = {
@@ -296,15 +285,45 @@ async def analyze_batch(request: BatchRequest):
                     "error": result.get("error"),
                     "status": result.get("status"),
                 }
-            
+
             analysis_results.append(AnalysisResult(**response_dict))
-        
+
         return analysis_results
-    
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/dashboard/scan")
+async def dashboard_scan(req: DashboardRequest):
+    """Scan all dependencies in a package.json for ML risk and known CVEs."""
+    if not engine:
+        raise HTTPException(status_code=503, detail="SCOPE engine not initialized")
+
+    _engine = engine
+
+    deps: Dict[str, str] = {}
+    deps.update(req.package_json.get("dependencies", {}))
+    deps.update(req.package_json.get("devDependencies", {}))
+
+    async def scan_one(name: str, version_str: str):
+        version = version_str.lstrip("^~>=<")
+        ml, vulns = await asyncio.gather(
+            asyncio.to_thread(_engine.analyze, name),
+            asyncio.to_thread(query_osv, name, version),
+        )
+        return {
+            "package":    name,
+            "version":    version,
+            "risk_level": ml.get("risk_level", "UNKNOWN"),
+            "score":      ml.get("score"),
+            "cves":       [{"id": v["id"], "summary": v.get("summary", "")} for v in vulns],
+        }
+
+    results = list(await asyncio.gather(*[scan_one(n, v) for n, v in deps.items()]))
+    results.sort(key=lambda x: (len(x["cves"]), x.get("score") or 0), reverse=True)
+    return results
 
 @app.get("/cache/clear")
 async def clear_cache():
@@ -331,40 +350,3 @@ if __name__ == "__main__":
         reload=True,
         log_level="info",
     )
-
-
-# ===========================================================================
-# Backend Endpoints
-# ===========================================================================
-
-class DashboardRequest(BaseModel):
-    package_json: dict
-
-@app.post("/dashboard/scan")
-async def dashboard_scan(req: DashboardRequest):
-    if not engine:
-        raise HTTPException(status_code=503, detail="SCOPE engine not initialized")
-
-    _engine = engine  # narrow type: guaranteed non-None past this point
-
-    deps = {}
-    deps.update(req.package_json.get("dependencies", {}))
-    deps.update(req.package_json.get("devDependencies", {}))
-
-    async def scan_one(name: str, version_str: str):
-        version = version_str.lstrip("^~>=<")
-        ml, vulns = await asyncio.gather(
-            asyncio.to_thread(_engine.analyze, name),
-            asyncio.to_thread(query_osv, name, version),
-        )
-        return {
-            "package":    name,
-            "version":    version,
-            "risk_level": ml.get("risk_level", "UNKNOWN"),
-            "score":      ml.get("score"),
-            "cves":       [{"id": v["id"], "summary": v.get("summary", "")} for v in vulns],
-        }
-
-    results = list(await asyncio.gather(*[scan_one(n, v) for n, v in deps.items()]))
-    results.sort(key=lambda x: (len(x["cves"]), x.get("score") or 0), reverse=True)
-    return results
