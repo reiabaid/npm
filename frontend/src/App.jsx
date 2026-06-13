@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const LOADING_STEPS = [
   "Scanning package metadata",
@@ -169,7 +169,41 @@ function FactorBars({ items }) {
   );
 }
 
-function RecentDialog({ open, onClose, recentAnalyses, onSelectRecent }) {
+const SCOPE_LETTERS = [
+  { letter: "S", word: "Security" },
+  { letter: "C", word: "Check for" },
+  { letter: "O", word: "Open-source" },
+  { letter: "P", word: "Package" },
+  { letter: "E", word: "Ecosystems" },
+];
+
+function SplashScreen({ onDone }) {
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => setFading(true), 2400);
+    const doneTimer = setTimeout(onDone, 3000);
+    return () => { clearTimeout(fadeTimer); clearTimeout(doneTimer); };
+  }, [onDone]);
+
+  return (
+    <div className={`splash ${fading ? "splash-fade" : ""}`}>
+      <div className="splash-inner">
+        <div className="splash-acronym">
+          {SCOPE_LETTERS.map(({ letter, word }, i) => (
+            <div key={letter} className="splash-row" style={{ animationDelay: `${i * 110}ms` }}>
+              <span className="splash-letter">{letter}</span>
+              <span className="splash-word">{word}</span>
+            </div>
+          ))}
+        </div>
+        <p className="splash-sub">NPM Dependency Security Scanner</p>
+      </div>
+    </div>
+  );
+}
+
+function RecentDialog({ open, onClose, onClear, recentAnalyses, onSelectRecent }) {
   if (!open) return null;
 
   return (
@@ -177,11 +211,14 @@ function RecentDialog({ open, onClose, recentAnalyses, onSelectRecent }) {
       <section className="glass card modal-panel" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <h2>Recent Analyses</h2>
-          <button type="button" className="icon-button" onClick={onClose}>
-            Close
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            {recentAnalyses.length > 0 && (
+              <button type="button" className="icon-button" onClick={onClear}>Clear</button>
+            )}
+            <button type="button" className="icon-button" onClick={onClose}>Close</button>
+          </div>
         </div>
-        <p className="muted">Click any package to reopen saved results instantly.</p>
+        <p className="muted">Saved in your browser. Click any package to restore results.</p>
         {recentAnalyses.length > 0 ? (
           <div className="recent-grid">
             {recentAnalyses.map((entry) => {
@@ -338,6 +375,7 @@ function DashboardView() {
 }
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
   const [activeTab, setActiveTab] = useState("scan");
   const [packageName, setPackageName] = useState("react-domm");
   const [loading, setLoading] = useState(false);
@@ -345,7 +383,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [notFound, setNotFound] = useState(null); // { name, suggestion? }
   const [result, setResult] = useState(null);
-  const [recentAnalyses, setRecentAnalyses] = useState([]);
+  const [recentAnalyses, setRecentAnalyses] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("scope_recent") || "[]"); }
+    catch { return []; }
+  });
   const [recentOpen, setRecentOpen] = useState(false);
 
   useEffect(() => {
@@ -353,6 +394,11 @@ export default function App() {
     const id = setInterval(() => setStepIndex((prev) => (prev + 1) % LOADING_STEPS.length), 1050);
     return () => clearInterval(id);
   }, [loading]);
+
+  useEffect(() => {
+    try { localStorage.setItem("scope_recent", JSON.stringify(recentAnalyses)); }
+    catch { /* storage full or unavailable */ }
+  }, [recentAnalyses]);
 
   async function analyzePackage(rawPackageName) {
     const trimmed = normalizePackageName(rawPackageName);
@@ -483,27 +529,32 @@ export default function App() {
 
   return (
     <div className="page">
+      {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
       <div className="bg-noise" aria-hidden="true" />
       <div className="bg-blob bg-blob-a" aria-hidden="true" />
       <div className="bg-blob bg-blob-b" aria-hidden="true" />
 
+      <nav className="navbar">
+        <span className="nav-brand">SCOPE</span>
+        <div className="nav-divider" />
+        <div className="nav-links">
+          <button type="button" className={`nav-link ${activeTab === "scan" ? "nav-link-active" : ""}`} onClick={() => setActiveTab("scan")}>
+            Package Scan
+          </button>
+          <button type="button" className={`nav-link ${activeTab === "dashboard" ? "nav-link-active" : ""}`} onClick={() => setActiveTab("dashboard")}>
+            Dashboard
+          </button>
+        </div>
+        <div className="nav-divider" />
+        <button type="button" className="nav-recent" onClick={() => setRecentOpen(true)}>
+          Recent {recentAnalyses.length > 0 && <span className="nav-recent-count">{recentAnalyses.length}</span>}
+        </button>
+      </nav>
+
       <main className="shell">
         <header className="hero reveal">
-          <div className="top-actions">
-            <div className="tab-switcher">
-              <button type="button" className={`tab-btn ${activeTab === "scan" ? "tab-active" : ""}`} onClick={() => setActiveTab("scan")}>
-                Package Scan
-              </button>
-              <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "tab-active" : ""}`} onClick={() => setActiveTab("dashboard")}>
-                Dashboard
-              </button>
-            </div>
-            <button type="button" className="secondary-button" onClick={() => setRecentOpen(true)}>
-              Recent ({recentAnalyses.length})
-            </button>
-          </div>
           <p className="kicker">SCOPE Intelligence</p>
-          <h1>{activeTab === "dashboard" ? "Dependency Vulnerability Dashboard" : "Package Trust Analysis"}</h1>
+          <h1>{activeTab === "dashboard" ? "Dependency Dashboard" : "Package Trust Analysis"}</h1>
           <p className="subtitle">Minimal, explainable security insight for NPM dependencies.</p>
         </header>
 
@@ -611,10 +662,7 @@ export default function App() {
 
             {result.llm_verdict && (
               <article className="glass card verdict-card">
-                <div className="verdict-header">
-                  <h2>AI Security Analysis</h2>
-                  <span className="verdict-badge">Claude</span>
-                </div>
+                <h2>Security Analysis</h2>
                 <p className="verdict-text">{result.llm_verdict}</p>
                 <p className="muted verdict-note">Generated for HIGH / CRITICAL packages only</p>
               </article>
@@ -633,6 +681,7 @@ export default function App() {
       <RecentDialog
         open={recentOpen}
         onClose={() => setRecentOpen(false)}
+        onClear={() => setRecentAnalyses([])}
         recentAnalyses={recentAnalyses}
         onSelectRecent={handleSelectRecent}
       />
