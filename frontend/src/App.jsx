@@ -424,6 +424,20 @@ function DashboardView({ onOpenPackage }) {
   );
 }
 
+function VerdictCard({ verdict }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <article className="glass card verdict-card">
+      <h2>Security Analysis</h2>
+      <p className={`verdict-text ${expanded ? "" : "verdict-clamped"}`}>{verdict}</p>
+      <button type="button" className="verdict-toggle" onClick={() => setExpanded((v) => !v)}>
+        {expanded ? "Show less" : "Show more"}
+      </button>
+      <p className="muted verdict-note">Generated for HIGH / CRITICAL packages only</p>
+    </article>
+  );
+}
+
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [activeTab, setActiveTab] = useState("scan");
@@ -759,11 +773,7 @@ export default function App() {
             </article>
 
             {result.llm_verdict && (
-              <article className="glass card verdict-card">
-                <h2>Security Analysis</h2>
-                <p className="verdict-text">{result.llm_verdict}</p>
-                <p className="muted verdict-note">Generated for HIGH / CRITICAL packages only</p>
-              </article>
+              <VerdictCard verdict={result.llm_verdict} />
             )}
 
             <article className="glass card chart-card">
