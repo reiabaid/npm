@@ -60,7 +60,7 @@ class AnalysisResult(BaseModel):
 
 class BatchRequest(BaseModel):
     """Request model for batch analysis."""
-    packages: List[str] = Field(..., min_items=1, max_items=BATCH_MAX_SIZE, description="List of package names (max 20)")
+    packages: List[str] = Field(..., min_length=1, max_length=BATCH_MAX_SIZE, description="List of package names (max 20)")
 
 class HealthResponse(BaseModel):
     """Health check response."""
