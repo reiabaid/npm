@@ -257,12 +257,22 @@ function getRiskBadgeClass(riskLevel = "") {
   return "badge-unknown";
 }
 
-function DashboardView() {
+function DashboardView({ onOpenPackage }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [depCount, setDepCount] = useState(0);
   const [rows, setRows] = useState(null);
   const [error, setError] = useState("");
+  const fileInputRef = useRef(null);
+
+  function handleFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setInput(ev.target.result);
+    reader.readAsText(file);
+    e.target.value = "";
+  }
 
   async function handleScan() {
     setError("");
@@ -272,7 +282,7 @@ function DashboardView() {
     try {
       parsed = JSON.parse(input);
     } catch {
-      setError("Invalid JSON — paste the full contents of a package.json file.");
+      setError("Invalid JSON — paste or upload a package.json file.");
       return;
     }
 
@@ -297,11 +307,30 @@ function DashboardView() {
     }
   }
 
+  const summary = rows
+    ? rows.reduce(
+        (acc, row) => {
+          const r = (row.risk_level || "UNKNOWN").toUpperCase();
+          acc.counts[r] = (acc.counts[r] || 0) + 1;
+          acc.totalCves += row.cves.length;
+          return acc;
+        },
+        { counts: {}, totalCves: 0 }
+      )
+    : null;
+
   return (
     <section className="dashboard-view">
       <div className="glass card reveal">
         <h2>Dependency Vulnerability Scan</h2>
-        <p className="muted">Paste your <span className="mono">package.json</span> below to scan all dependencies for known CVEs and ML risk scores.</p>
+        <p className="muted">Upload or paste your <span className="mono">package.json</span> to scan all dependencies for known CVEs and ML risk scores.</p>
+        <div className="dash-upload-row">
+          <input ref={fileInputRef} type="file" accept=".json,application/json" className="dash-file-input" onChange={handleFileUpload} />
+          <button type="button" className="secondary-button" onClick={() => fileInputRef.current?.click()}>
+            Upload package.json
+          </button>
+          <span className="muted">or paste below</span>
+        </div>
         <textarea
           className="dash-textarea"
           value={input}
@@ -321,54 +350,73 @@ function DashboardView() {
         </div>
       )}
 
-      {rows && (
-        <div className="glass card reveal">
-          <h2>Results <span className="muted">— {rows.length} package{rows.length !== 1 ? "s" : ""}</span></h2>
-          <div className="dash-table-wrap">
-            <table className="dash-table">
-              <thead>
-                <tr>
-                  <th>Package</th>
-                  <th>Version</th>
-                  <th>Risk</th>
-                  <th>Score</th>
-                  <th>CVEs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.package}>
-                    <td className="mono">{row.package}</td>
-                    <td className="mono muted">{row.version || "—"}</td>
-                    <td>
-                      <span className={`risk-badge ${getRiskBadgeClass(row.risk_level)}`}>
-                        {row.risk_level || "UNKNOWN"}
-                      </span>
-                    </td>
-                    <td className="mono">{row.score != null ? `${(row.score * 100).toFixed(1)}%` : "—"}</td>
-                    <td>
-                      {row.cves.length === 0 ? (
-                        <span className="muted">none</span>
-                      ) : (
-                        <details className="cve-details">
-                          <summary className="cve-count">{row.cves.length} CVE{row.cves.length !== 1 ? "s" : ""}</summary>
-                          <ul className="cve-list">
-                            {row.cves.map((cve) => (
-                              <li key={cve.id}>
-                                <span className="mono cve-id">{cve.id}</span>
-                                {cve.summary && <span className="cve-summary"> — {cve.summary}</span>}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {rows && summary && (
+        <>
+          <div className="glass card dash-summary reveal">
+            <div className="dash-summary-stats">
+              {summary.counts.CRITICAL > 0 && <span className="dash-stat dash-stat-critical">{summary.counts.CRITICAL} critical</span>}
+              {summary.counts.HIGH > 0 && <span className="dash-stat dash-stat-high">{summary.counts.HIGH} high</span>}
+              {summary.counts.MEDIUM > 0 && <span className="dash-stat dash-stat-medium">{summary.counts.MEDIUM} medium</span>}
+              {summary.counts.HEALTHY > 0 && <span className="dash-stat dash-stat-healthy">{summary.counts.HEALTHY} healthy</span>}
+              <div className="dash-stat-divider" />
+              <span className="dash-stat dash-stat-cve">{summary.totalCves} CVE{summary.totalCves !== 1 ? "s" : ""} found</span>
+              <span className="muted" style={{ fontSize: "0.82rem" }}>across {rows.length} package{rows.length !== 1 ? "s" : ""}</span>
+            </div>
           </div>
-        </div>
+
+          <div className="glass card reveal">
+            <div className="dash-table-wrap">
+              <table className="dash-table">
+                <thead>
+                  <tr>
+                    <th>Package</th>
+                    <th>Version</th>
+                    <th>Risk</th>
+                    <th>Score</th>
+                    <th>CVEs</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.package}>
+                      <td className="mono">{row.package}</td>
+                      <td className="mono muted">{row.version || "—"}</td>
+                      <td>
+                        <span className={`risk-badge ${getRiskBadgeClass(row.risk_level)}`}>
+                          {row.risk_level || "UNKNOWN"}
+                        </span>
+                      </td>
+                      <td className="mono">{row.score != null ? `${(row.score * 100).toFixed(1)}%` : "—"}</td>
+                      <td>
+                        {row.cves.length === 0 ? (
+                          <span className="muted">none</span>
+                        ) : (
+                          <details className="cve-details">
+                            <summary className="cve-count">{row.cves.length} CVE{row.cves.length !== 1 ? "s" : ""}</summary>
+                            <ul className="cve-list">
+                              {row.cves.map((cve) => (
+                                <li key={cve.id}>
+                                  <span className="mono cve-id">{cve.id}</span>
+                                  {cve.summary && <span className="cve-summary"> — {cve.summary}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </td>
+                      <td>
+                        <button type="button" className="dash-inspect-btn" onClick={() => onOpenPackage(row.package)}>
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </section>
   );
@@ -558,7 +606,9 @@ export default function App() {
           <p className="subtitle">Minimal, explainable security insight for NPM dependencies.</p>
         </header>
 
-        {activeTab === "dashboard" && <DashboardView />}
+        {activeTab === "dashboard" && (
+          <DashboardView onOpenPackage={(name) => { setActiveTab("scan"); analyzePackage(name); }} />
+        )}
 
         {activeTab === "scan" && <>
         <section className="glass card search-card reveal reveal-delay-1">

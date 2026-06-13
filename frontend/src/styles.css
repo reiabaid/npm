@@ -884,6 +884,65 @@ h2 {
 /* ── Dashboard view ───────────────────────────────────────── */
 .dashboard-view { display: flex; flex-direction: column; gap: 1.2rem; }
 
+.dash-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.8rem 0 0.2rem;
+}
+
+.dash-file-input { display: none; }
+
+.dash-summary { padding: 0.85rem 1.35rem; }
+
+.dash-summary-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.dash-stat {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.18rem 0.55rem;
+  border-radius: var(--radius-pill);
+}
+
+.dash-stat-critical { background: rgba(181,122,122,0.22); color: #e08080; }
+.dash-stat-high     { background: rgba(181,122,122,0.15); color: var(--danger); }
+.dash-stat-medium   { background: rgba(184,154,102,0.15); color: var(--warning); }
+.dash-stat-healthy  { background: rgba(127,169,139,0.15); color: var(--success); }
+.dash-stat-cve      { background: rgba(132,200,232,0.12); color: var(--accent); }
+
+.dash-stat-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 0.15rem;
+  flex-shrink: 0;
+}
+
+.dash-inspect-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.2rem 0.6rem;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.dash-inspect-btn:hover {
+  color: var(--accent);
+  border-color: rgba(132, 200, 232, 0.4);
+  background: var(--accent-soft);
+}
+
 .dash-textarea {
   width: 100%;
   background: rgba(0, 0, 0, 0.3);

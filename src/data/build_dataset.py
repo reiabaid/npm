@@ -1,8 +1,10 @@
 import os
 import json
 import time
+import threading
 import pandas as pd
 from typing import List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.data.npm_fetcher import (
     fetch_npm_raw,
@@ -63,7 +65,6 @@ def process_package(pkg: str, label: int, popular_names: List[str]) -> dict | No
 
     if not load_raw_json(pkg):
         save_raw_json(npm_raw, pkg)
-        time.sleep(0.1)
 
     repository_info = npm_raw.get("repository")
     maintainers = npm_raw.get("maintainers", [])
@@ -77,11 +78,8 @@ def process_package(pkg: str, label: int, popular_names: List[str]) -> dict | No
         maintainer_min_age = cached["maintainer_age"]
     else:
         github_stats = fetch_github_stats(repository_info)
-        time.sleep(0.2)
         weekly_downloads = fetch_package_downloads(pkg)
-        time.sleep(0.1)
         maintainer_min_age = fetch_maintainer_age(maintainers)
-        time.sleep(0.1)
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump({"github": github_stats, "downloads": weekly_downloads,
                        "maintainer_age": maintainer_min_age}, f)
@@ -114,13 +112,13 @@ def main():
 
     popular_names = list(healthy_pkgs)  # used for typosquat distance feature
 
-    # label=0: top-500 + hard negatives (transitive deps) + challenging negatives
-    # label=1: confirmed malicious packages only
+    # Malicious packages first so GitHub rate limiting doesn't prevent them from
+    # being processed — healthy packages have disk-cached npm JSON already.
     all_pkgs: List[Tuple[str, int]] = (
-        [(p, 0) for p in healthy_pkgs]
+        [(p, 1) for p in malicious_pkgs]
+        + [(p, 0) for p in healthy_pkgs]
         + [(p, 0) for p in hard_neg_pkgs]
         + [(p, 0) for p in challenging_neg_pkgs]
-        + [(p, 1) for p in malicious_pkgs]
     )
 
     # Deduplicate by package name (keep first occurrence)
@@ -133,21 +131,35 @@ def main():
     all_pkgs = deduped
 
     processed_data = []
-    print(f"Total packages to process: {len(all_pkgs)}")
+    total = len(all_pkgs)
+    print(f"Total packages to process: {total}")
     print(f"  Healthy (top-500):      {sum(1 for p, l in all_pkgs if l == 0 and p in set(healthy_pkgs))}")
     print(f"  Hard negatives:         {sum(1 for p, l in all_pkgs if l == 0 and p in set(hard_neg_pkgs))}")
     print(f"  Challenging negatives:  {sum(1 for p, l in all_pkgs if l == 0 and p in set(challenging_neg_pkgs))}")
     print(f"  Confirmed malicious:    {sum(1 for _, l in all_pkgs if l == 1)}")
 
-    for i, (pkg, label) in enumerate(all_pkgs):
-        print(f"[{i+1}/{len(all_pkgs)}] Processing {pkg} (label={label})...")
-        try:
-            features = process_package(pkg, label, popular_names)
-            processed_data.append(features)
-        except Exception as e:
-            print(f"[ERROR] {pkg}: {e}")
-            with open(failed_log, "a", encoding="utf-8") as f:
-                f.write(f"{pkg}\n")
+    lock = threading.Lock()
+    completed = 0
+
+    def process_one(args):
+        nonlocal completed
+        pkg, label = args
+        features = process_package(pkg, label, popular_names)
+        with lock:
+            completed += 1
+            print(f"[{completed}/{total}] OK {pkg} (label={label})", flush=True)
+        return features
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(process_one, (pkg, label)): pkg for pkg, label in all_pkgs}
+        for future in as_completed(futures):
+            pkg = futures[future]
+            try:
+                processed_data.append(future.result())
+            except Exception as e:
+                print(f"[ERROR] {pkg}: {e}", flush=True)
+                with open(failed_log, "a", encoding="utf-8") as f:
+                    f.write(f"{pkg}\n")
 
     if processed_data:
         df = pd.DataFrame(processed_data)
