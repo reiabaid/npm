@@ -47,6 +47,7 @@ train_log.txt
 
 # Data (keep structure, ignore large/generated files)
 data/raw/*
+data/raw/_meta_*.json
 data/processed/*
 data/hard_negatives.txt
 data/challenging_negatives.txt

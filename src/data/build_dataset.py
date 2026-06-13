@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import pandas as pd
 from typing import List, Tuple
@@ -49,25 +50,41 @@ def load_confirmed_malicious(filepath: str) -> List[str]:
     return packages
 
 
+def _meta_cache_path(pkg: str, base_dir: str = "data/raw") -> str:
+    safe = pkg.replace("/", "_").replace("@", "")
+    return os.path.join(base_dir, f"_meta_{safe}.json")
+
+
 def process_package(pkg: str, label: int, popular_names: List[str]) -> dict | None:
     """Fetch all data for one package and return a feature dict, or None on failure."""
     npm_raw = load_raw_json(pkg) or fetch_npm_raw(pkg)
     if npm_raw is None:
         raise ValueError(f"npm fetch returned None for '{pkg}'")
 
-    save_raw_json(npm_raw, pkg)
-    time.sleep(0.3)
+    if not load_raw_json(pkg):
+        save_raw_json(npm_raw, pkg)
+        time.sleep(0.1)
 
     repository_info = npm_raw.get("repository")
-    github_stats = fetch_github_stats(repository_info)
-    time.sleep(0.5)
-
-    weekly_downloads = fetch_package_downloads(pkg)
-    time.sleep(0.3)
-
     maintainers = npm_raw.get("maintainers", [])
-    maintainer_min_age = fetch_maintainer_age(maintainers)
-    time.sleep(0.3)
+
+    meta_path = _meta_cache_path(pkg)
+    if os.path.exists(meta_path):
+        with open(meta_path, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        github_stats = cached["github"]
+        weekly_downloads = cached["downloads"]
+        maintainer_min_age = cached["maintainer_age"]
+    else:
+        github_stats = fetch_github_stats(repository_info)
+        time.sleep(0.2)
+        weekly_downloads = fetch_package_downloads(pkg)
+        time.sleep(0.1)
+        maintainer_min_age = fetch_maintainer_age(maintainers)
+        time.sleep(0.1)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump({"github": github_stats, "downloads": weekly_downloads,
+                       "maintainer_age": maintainer_min_age}, f)
 
     features = engineer_features(
         npm_raw,
