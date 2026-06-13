@@ -74,37 +74,36 @@ def fetch_package_downloads(package_name: str,
 
 
 def fetch_maintainer_age(maintainers: list) -> int:
-    """Return the age in days of the *newest* maintainer account (min across all).
-
-    Uses the npm user profile endpoint. Returns 0 if no accounts can be fetched,
-    which is treated as maximally suspicious (unknown/new account).
-    """
+    """Return the age in days of the *newest* maintainer account (min across all)."""
     if not maintainers:
         return 0
 
     from datetime import datetime, timezone
+    from concurrent.futures import ThreadPoolExecutor
 
-    min_age = None
-    for m in maintainers:
+    def _fetch_one(m):
         username = m.get("name") if isinstance(m, dict) else str(m)
         if not username:
-            continue
+            return None
         url = f"{NPM_REGISTRY_URL}/-/user/org.couchdb.user/{username}"
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, timeout=8)
             if resp.status_code == 200:
                 created_str = resp.json().get("created")
                 if created_str:
-                    created = datetime.fromisoformat(
-                        created_str.replace("Z", "+00:00")
-                    )
-                    age = (datetime.now(timezone.utc) - created).days
-                    if min_age is None or age < min_age:
-                        min_age = age
+                    created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                    return (datetime.now(timezone.utc) - created).days
         except requests.exceptions.RequestException:
-            continue
+            pass
+        return None
 
-    return min_age if min_age is not None else 0
+    ages = []
+    with ThreadPoolExecutor(max_workers=min(len(maintainers), 5)) as pool:
+        for age in pool.map(_fetch_one, maintainers):
+            if age is not None:
+                ages.append(age)
+
+    return min(ages) if ages else 0
 
 
 def save_raw_json(data: dict, package_name: str,

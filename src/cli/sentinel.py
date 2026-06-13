@@ -3,6 +3,7 @@ import argparse
 import json
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 load_dotenv()
 import joblib
@@ -138,18 +139,22 @@ class ScopeEngine:
             install_scripts = {k: v for k, v in _all_scripts.items()
                                if k in ("preinstall", "install", "postinstall")}
 
-            # 2. Fetch GitHub metadata
+            # 2+3. Fetch GitHub stats, downloads, and maintainer age in parallel
             repo_field = npm_raw.get("repository")
             if not repo_field:
                 warnings.append("No repository link found (potential risk factor).")
-            github_stats = fetch_github_stats(repo_field)
+            maintainers = npm_raw.get("maintainers", [])
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                f_github   = pool.submit(fetch_github_stats, repo_field)
+                f_downloads = pool.submit(fetch_package_downloads, package_name)
+                f_age      = pool.submit(fetch_maintainer_age, maintainers)
+                github_stats    = f_github.result()
+                weekly_downloads = f_downloads.result()
+                maintainer_min_age = f_age.result()
+
             if not github_stats.get("has_github_repo", 0) and repo_field:
                 warnings.append("GitHub data unavailable (rate-limited or not found). Proceeding with zeros.")
-
-            # 3. Fetch download count and maintainer age (new signals)
-            weekly_downloads = fetch_package_downloads(package_name)
-            maintainers = npm_raw.get("maintainers", [])
-            maintainer_min_age = fetch_maintainer_age(maintainers)
 
             # 4. Engineer features (pass popular packages for typosquat distance)
             features = engineer_features(

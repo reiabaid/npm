@@ -91,7 +91,7 @@ function getAlternativeName(result) {
 }
 
 function buildShareUrl(packageName) {
-  return `https://scope.dev/check/${encodeURIComponent(packageName)}`;
+  return `${window.location.origin}/?pkg=${encodeURIComponent(packageName)}`;
 }
 
 async function readResponseBody(response) {
@@ -127,7 +127,9 @@ function Gauge({ score, riskLevel }) {
         />
       </svg>
       <div className="gauge-label">
-        <span className="gauge-value">{percent}</span>
+        <span className="gauge-value">
+          {percent === 0 ? "✓" : `${percent}%`}
+        </span>
         <span className="gauge-subtitle">{getRiskLabel(score, riskLevel)}</span>
       </div>
     </div>
@@ -436,6 +438,9 @@ export default function App() {
     catch { return []; }
   });
   const [recentOpen, setRecentOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestTimer = useRef(null);
 
   useEffect(() => {
     if (!loading) return undefined;
@@ -447,6 +452,14 @@ export default function App() {
     try { localStorage.setItem("scope_recent", JSON.stringify(recentAnalyses)); }
     catch { /* storage full or unavailable */ }
   }, [recentAnalyses]);
+
+  useEffect(() => {
+    const pkg = new URLSearchParams(window.location.search).get("pkg");
+    if (pkg) {
+      setPackageName(pkg);
+      analyzePackage(pkg);
+    }
+  }, []);
 
   async function analyzePackage(rawPackageName) {
     const trimmed = normalizePackageName(rawPackageName);
@@ -507,6 +520,31 @@ export default function App() {
     }
   }
 
+  function onPackageInput(e) {
+    const val = e.target.value;
+    setPackageName(val);
+    setShowSuggestions(false);
+    clearTimeout(suggestTimer.current);
+    if (val.trim().length < 2) { setSuggestions([]); return; }
+    suggestTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(val.trim())}&size=6`
+        );
+        const data = await res.json();
+        setSuggestions((data.objects || []).map((o) => o.package.name));
+        setShowSuggestions(true);
+      } catch { setSuggestions([]); }
+    }, 280);
+  }
+
+  function onSuggestionPick(name) {
+    setPackageName(name);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    analyzePackage(name);
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
     await analyzePackage(packageName);
@@ -549,7 +587,7 @@ export default function App() {
           meaning: "Label bucket derived from the model score.",
         },
         {
-          label: "Model score",
+          label: "Risk score",
           value: result.score.toFixed(3),
           meaning: "Probability-like risk output from 0 to 1.",
         },
@@ -606,9 +644,7 @@ export default function App() {
           <p className="subtitle">Minimal, explainable security insight for NPM dependencies.</p>
         </header>
 
-        {activeTab === "dashboard" && (
-          <DashboardView onOpenPackage={(name) => { setActiveTab("scan"); analyzePackage(name); }} />
-        )}
+        {activeTab === "dashboard" && <DashboardView />}
 
         {activeTab === "scan" && <>
         <section className="glass card search-card reveal reveal-delay-1">
@@ -616,16 +652,28 @@ export default function App() {
             <label htmlFor="package-input" className="label">
               Package
             </label>
-            <div className="search-row">
+            <div className="search-row" style={{ position: "relative" }}>
               <input
                 id="package-input"
                 value={packageName}
-                onChange={(e) => setPackageName(e.target.value)}
+                onChange={onPackageInput}
                 onKeyDown={onPackageKeyDown}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
                 placeholder="Enter package name (e.g. react-domm)"
                 className="search-input"
+                autoComplete="off"
                 required
               />
+              {showSuggestions && suggestions.length > 0 && (
+                <ul className="suggestions-list">
+                  {suggestions.map((s) => (
+                    <li key={s} className="suggestions-item" onMouseDown={() => onSuggestionPick(s)}>
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <button type="submit" className="search-button" disabled={loading}>
                 {loading ? "Analyzing" : "Analyze"}
               </button>
