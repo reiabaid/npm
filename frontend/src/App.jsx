@@ -1,4 +1,30 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState } from "react";
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, message: error?.message || "Unknown error" };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+          <div className="glass card" style={{ maxWidth: 480, textAlign: "center", padding: "2rem" }}>
+            <h2>Something went wrong</h2>
+            <p className="muted">{this.state.message}</p>
+            <button className="search-button" style={{ marginTop: "1rem" }} onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const LOADING_STEPS = [
   "Scanning package metadata",
@@ -259,11 +285,42 @@ function getRiskBadgeClass(riskLevel = "") {
   return "badge-unknown";
 }
 
+const DASH_PAGE_SIZE = 20;
+
+function DashboardSkeleton({ count }) {
+  return (
+    <div className="glass card reveal">
+      <div className="dash-table-wrap">
+        <table className="dash-table">
+          <thead>
+            <tr>
+              <th>Package</th><th>Version</th><th>Risk</th><th>Score</th><th>CVEs</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: Math.min(count || 6, 10) }).map((_, i) => (
+              <tr key={i} className="skeleton-row">
+                <td><span className="skeleton skeleton-text" style={{ width: `${60 + (i * 23) % 40}%` }} /></td>
+                <td><span className="skeleton skeleton-text" style={{ width: "4rem" }} /></td>
+                <td><span className="skeleton skeleton-badge" /></td>
+                <td><span className="skeleton skeleton-text" style={{ width: "3rem" }} /></td>
+                <td><span className="skeleton skeleton-text" style={{ width: "3rem" }} /></td>
+                <td><span className="skeleton skeleton-btn" /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function DashboardView({ onOpenPackage }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [depCount, setDepCount] = useState(0);
   const [rows, setRows] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(DASH_PAGE_SIZE);
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
@@ -293,6 +350,7 @@ function DashboardView({ onOpenPackage }) {
       ...(parsed.devDependencies || {}),
     }).length;
     setDepCount(pkgCount);
+    setVisibleCount(DASH_PAGE_SIZE);
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/dashboard/scan`, {
@@ -352,7 +410,9 @@ function DashboardView({ onOpenPackage }) {
         </div>
       )}
 
-      {rows && summary && (
+      {loading && <DashboardSkeleton count={depCount} />}
+
+      {rows && summary && !loading && (
         <>
           <div className="glass card dash-summary reveal">
             <div className="dash-summary-stats">
@@ -380,7 +440,7 @@ function DashboardView({ onOpenPackage }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {rows.slice(0, visibleCount).map((row) => (
                     <tr key={row.package}>
                       <td className="mono">{row.package}</td>
                       <td className="mono muted">{row.version || "—"}</td>
@@ -408,7 +468,7 @@ function DashboardView({ onOpenPackage }) {
                         )}
                       </td>
                       <td>
-                        <button type="button" className="dash-inspect-btn" onClick={() => onOpenPackage(row.package)}>
+                        <button type="button" className="dash-inspect-btn" onClick={() => onOpenPackage?.(row.package)}>
                           Inspect
                         </button>
                       </td>
@@ -417,6 +477,17 @@ function DashboardView({ onOpenPackage }) {
                 </tbody>
               </table>
             </div>
+            {visibleCount < rows.length && (
+              <div style={{ textAlign: "center", padding: "1rem 0 0.5rem" }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setVisibleCount((n) => n + DASH_PAGE_SIZE)}
+                >
+                  Load more ({rows.length - visibleCount} remaining)
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -628,6 +699,7 @@ export default function App() {
   const riskTone = getRiskTone(result?.risk_level || "");
 
   return (
+    <ErrorBoundary>
     <div className="page">
       {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
       <div className="bg-noise" aria-hidden="true" />
@@ -794,5 +866,6 @@ export default function App() {
         onSelectRecent={handleSelectRecent}
       />
     </div>
+    </ErrorBoundary>
   );
 }

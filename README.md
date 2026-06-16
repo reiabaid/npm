@@ -13,12 +13,16 @@ pinned: false
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 [![SCOPE Scan](https://github.com/reiabaid/npm/actions/workflows/scope.yml/badge.svg)](https://github.com/reiabaid/npm/actions/workflows/scope.yml)
+[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen.svg)](https://npm-taupe.vercel.app/)
+[![API](https://img.shields.io/badge/api-HuggingFace-orange.svg)](https://huggingface.co/spaces/darcy-xoxo/scope)
 
 SCOPE is an explainable npm dependency scanner that flags risky packages in the CLI, web UI, and GitHub Actions.
 
 ## Demo
 
-Add a screenshot or GIF here.
+**[Try it live →](https://npm-taupe.vercel.app/)**
+
+> Backend API hosted on [HuggingFace Spaces](https://huggingface.co/spaces/darcy-xoxo/scope).
 
 ## How It Works
 
@@ -85,4 +89,3 @@ Use [`.github/workflows/scope.yml`](.github/workflows/scope.yml) in a repo with 
 ## Notes
 
 - Set `VITE_API_BASE` if the frontend points to a deployed backend.
-- Add a real screenshot/GIF and Loom link before publishing.

@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from collections import defaultdict
@@ -21,13 +22,53 @@ from src.data.osv_fetcher import query_osv
 # ============================================================================
 
 engine: Optional[ScopeEngine] = None
-response_cache: Dict[str, Dict] = {}
-cache_expiry: Dict[str, datetime] = {}
 rate_limit_tracker: Dict[str, List[datetime]] = defaultdict(list)
 
 RATE_LIMIT_REQUESTS = 10
 RATE_LIMIT_WINDOW = 60  # seconds
 CACHE_TTL = 30 * 60  # 30 minutes in seconds
+CACHE_FILE = "/tmp/scope_cache.json"
+
+import json as _json
+import threading as _threading
+_cache_lock = _threading.Lock()
+
+def _load_cache() -> Dict:
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r") as f:
+                return _json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_cache(data: Dict):
+    try:
+        with open(CACHE_FILE, "w") as f:
+            _json.dump(data, f)
+    except Exception:
+        pass
+
+def _cache_get(key: str):
+    with _cache_lock:
+        store = _load_cache()
+        entry = store.get(key)
+        if not entry:
+            return None
+        if datetime.fromisoformat(entry["expires"]) < datetime.utcnow():
+            store.pop(key, None)
+            _save_cache(store)
+            return None
+        return entry["value"]
+
+def _cache_set(key: str, value: Dict):
+    with _cache_lock:
+        store = _load_cache()
+        store[key] = {
+            "value": value,
+            "expires": (datetime.utcnow() + timedelta(seconds=CACHE_TTL)).isoformat(),
+        }
+        _save_cache(store)
 BATCH_MAX_SIZE = 20
 
 # ============================================================================
@@ -86,12 +127,19 @@ app = FastAPI(
 # Middleware: CORS
 # ============================================================================
 
+_raw_origin = os.environ.get("ALLOWED_ORIGIN", "")
+_allowed_origins = (
+    [o.strip() for o in _raw_origin.split(",") if o.strip()]
+    if _raw_origin
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # ============================================================================
@@ -136,10 +184,8 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up resources on shutdown."""
-    global engine, response_cache, cache_expiry, rate_limit_tracker
+    global engine, rate_limit_tracker
     engine = None
-    response_cache.clear()
-    cache_expiry.clear()
     rate_limit_tracker.clear()
 
 # ============================================================================
@@ -147,19 +193,10 @@ async def shutdown_event():
 # ============================================================================
 
 def _get_cached_result(package_name: str) -> Optional[Dict]:
-    """Retrieve cached result if it exists and hasn't expired."""
-    if package_name in response_cache:
-        if package_name in cache_expiry:
-            if datetime.now() < cache_expiry[package_name]:
-                return response_cache[package_name]
-        response_cache.pop(package_name, None)
-        cache_expiry.pop(package_name, None)
-    return None
+    return _cache_get(package_name)
 
 def _cache_result(package_name: str, result: Dict):
-    """Cache a result with expiry time."""
-    response_cache[package_name] = result
-    cache_expiry[package_name] = datetime.now() + timedelta(seconds=CACHE_TTL)
+    _cache_set(package_name, result)
 
 def _shap_factors_to_model(explanations: List[Dict]) -> List[ShapFactor]:
     """Convert SHAP explanations to Pydantic models."""
@@ -328,15 +365,16 @@ async def dashboard_scan(req: DashboardRequest):
 @app.get("/cache/clear")
 async def clear_cache():
     """Clear the response cache."""
-    global response_cache, cache_expiry
-    response_cache.clear()
-    cache_expiry.clear()
+    with _cache_lock:
+        _save_cache({})
     return {"status": "ok", "message": "Cache cleared"}
 
 @app.get("/cache/size")
 async def get_cache_size():
     """Get current cache size."""
-    return {"cached_packages": len(response_cache), "cache_ttl_seconds": CACHE_TTL}
+    with _cache_lock:
+        store = _load_cache()
+    return {"cached_packages": len(store), "cache_ttl_seconds": CACHE_TTL}
 
 # ============================================================================
 # Entry Point
