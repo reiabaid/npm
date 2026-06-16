@@ -89,6 +89,7 @@ def engineer_features(
     script_suspicion_score = _script_suspicion_score(scripts)
 
     return {
+        "name":                         pkg_name,
         "days_since_created":           days_since_created,
         "days_since_last_update":       days_since_last_update,
         "num_versions":                 num_versions,
